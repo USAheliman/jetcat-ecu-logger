@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
     private var driveText: TextView? = null
     private var driveButton: Button? = null
     @Volatile private var syncing = false
+    private lateinit var updates: Updates
     private var signInCancelled = false
 
     private val connected get() = ble.state is LoggerBle.State.Ready
@@ -70,6 +71,9 @@ class MainActivity : AppCompatActivity() {
         store = FlightStore(this)
         drive = OneDrive(this, BuildConfig.ONEDRIVE_CLIENT_ID)
         ble = LoggerBle(this)
+        updates = Updates(this, ble, ::bleSync,
+            js = { code -> runOnUiThread { webView?.evaluateJavascript(code, null) } },
+            toast = { m -> runOnUiThread { toast(m) } })
         root = FrameLayout(this)
         setContentView(root)
         // Android 15 draws apps edge to edge (under the status and navigation bars): keep the
@@ -97,6 +101,7 @@ class MainActivity : AppCompatActivity() {
         ble.appInForeground = true
         if (webView == null) startScanIfPermitted()
         uploadInBackground()
+        updates.resumePending()        // back from allowing app installs
     }
 
     override fun onPause() {
@@ -182,7 +187,13 @@ class MainActivity : AppCompatActivity() {
         col.addView(driveText)
         driveButton = Button(this)
         col.addView(driveButton)
+        col.addView(TextView(this).apply {
+            text = "App version ${updates.versionName()} · tap to check for updates"
+            textSize = 12f; alpha = 0.6f; setPadding(0, dp(14), 0, 0)
+            setOnClickListener { updates.checkApp(true) }
+        })
         root.addView(col)
+        updates.checkApp(false)        // at most hourly; silent unless there is a newer release
         refreshDrive()
         statusText?.text = if (connected) "Connected" else "Looking for loggers… press the logger's button or plug it into an ECU to wake it."
         if (connected) ble.disconnect()       // home = leave the logger; it can go back to sleep
@@ -371,8 +382,11 @@ class MainActivity : AppCompatActivity() {
         return out
     }
 
+    /** For Updates: back to the home screen after a firmware install (the logger restarts). */
+    fun goHome() = showHome()
+
     private fun syncInBackground() {
-        if (syncing) return
+        if (syncing || updates.busy) return
         syncing = true
         Thread {
             try {
@@ -469,6 +483,13 @@ class MainActivity : AppCompatActivity() {
             drive.signOut(); refreshDrive(); webView?.evaluateJavascript("if(tab==='settings')render()", null)
         }
         @JavascriptInterface fun home() = runOnUiThread { showHome() }
+        @JavascriptInterface fun appVersion(): String = updates.versionName()
+        @JavascriptInterface fun checkAppUpdate() = runOnUiThread { updates.checkApp(true) }
+        @JavascriptInterface fun firmwareReleases() = updates.firmwareList()
+        @JavascriptInterface fun installFirmware(tag: String, board: String) {
+            if (!connected) { runOnUiThread { toast("Connect to the logger first.") }; return }
+            updates.installFirmware(tag, board)
+        }
         /** The pages' CSV exports: a WebView can't download, so hand the file to the share sheet. */
         @JavascriptInterface fun saveFile(name: String, text: String) = runOnUiThread {
             runCatching {

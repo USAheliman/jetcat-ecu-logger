@@ -1,0 +1,86 @@
+# Release: Actions > Release > Run workflow, type the version (e.g. 1.0.0) and the notes.
+# Builds the logger firmware for both boards and the Android app, all stamped with that
+# version, and publishes GitHub release v<version>:
+#   JetCatLogger.apk, firmware-xiao_plus.bin, firmware-devkitc.bin, release.json
+# The app offers the new app version and lists the firmware in Settings > Updates.
+# Version numbers are only ever set here, by Mehul; every other build is "dev".
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. 1.0.0 (major.minor.patch)"
+        required: true
+      notes:
+        description: "Release notes (shown in the app)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version number
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Version must look like 1.0.0"; exit 1; }
+      - uses: actions/checkout@v4
+      - name: Not already released
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then echo "::error::v$VERSION already exists"; exit 1; fi
+
+      # ---- logger firmware
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+      - name: Build firmware
+        run: |
+          pip install -q platformio
+          export PLATFORMIO_BUILD_FLAGS="-DFW_VERSION=\\\"$VERSION\\\""
+          pio run -e xiao_plus -e esp32s3_n16r8
+          mkdir -p out
+          cp .pio/build/xiao_plus/firmware.bin out/firmware-xiao_plus.bin
+          cp .pio/build/esp32s3_n16r8/firmware.bin out/firmware-devkitc.bin
+          # the version must be inside the image
+          grep -c "$VERSION" out/firmware-xiao_plus.bin >/dev/null || { echo "::error::version not found in firmware"; exit 1; }
+
+      # ---- app
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.10.2" }
+      - name: Signing key
+        env: { KS: "${{ secrets.APP_KEYSTORE_B64 }}" }
+        run: |
+          [ -n "$KS" ] || { echo "::error::Add the APP_KEYSTORE_B64 and APP_KEYSTORE_PASSWORD secrets"; exit 1; }
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/release.p12"
+      - name: Build the app
+        working-directory: android/JetCatLogger
+        env: { KS_PW: "${{ secrets.APP_KEYSTORE_PASSWORD }}" }
+        run: |
+          EXTRA=""
+          if [ -n "${{ vars.ONEDRIVE_CLIENT_ID }}" ]; then EXTRA="-PONEDRIVE_CLIENT_ID=${{ vars.ONEDRIVE_CLIENT_ID }}"; fi
+          gradle --no-daemon $EXTRA -PappVersion="$VERSION" \
+            -PsigningStore="$RUNNER_TEMP/release.p12" -PsigningPassword="$KS_PW" \
+            assembleDebug testDebugUnitTest
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/out/JetCatLogger.apk"
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)
+          CODE=$("$AAPT" dump badging "$GITHUB_WORKSPACE/out/JetCatLogger.apk" | head -1 | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+          [ -n "$CODE" ] || { echo "::error::could not read the app versionCode"; exit 1; }
+          printf '{"version":"%s","app_version_code":%s,"commit":"%s"}\n' "$VERSION" "$CODE" "${GITHUB_SHA::7}" > "$GITHUB_WORKSPACE/out/release.json"
+          cat "$GITHUB_WORKSPACE/out/release.json"
+
+      - name: Publish v${{ inputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          gh release create "v$VERSION" out/* --title "JetCat Logger $VERSION" --notes "$NOTES" --target "$GITHUB_SHA" --latest

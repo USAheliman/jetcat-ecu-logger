@@ -1,0 +1,26 @@
+# Compile check of the logger firmware (both boards) and the parser unit test on every push
+# that touches the firmware. Publishes nothing; releases come from release.yml.
+name: Firmware
+
+on:
+  push:
+    paths: [ "src/**", "lib/**", "data/index.html", "platformio.ini", "partitions.csv", "test/**", ".github/workflows/firmware.yml" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+      - name: Build both boards
+        run: |
+          pip install -q platformio
+          pio run -e xiao_plus -e esp32s3_n16r8
+      - name: Parser unit test
+        run: pio test -e native

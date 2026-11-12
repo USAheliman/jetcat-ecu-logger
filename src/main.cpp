@@ -28,7 +28,12 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 
-const char* FW = "dev";   // version numbering left to Mehul
+// Version: "dev" for every build except a release, which the GitHub "Release" action stamps
+// with the number Mehul types in (PLATFORMIO_BUILD_FLAGS=-DFW_VERSION=\"1.0.0\").
+#ifndef FW_VERSION
+#define FW_VERSION "dev"
+#endif
+const char* FW = FW_VERSION;
 
 static Leds leds;
 static EcuLink ecu;
@@ -45,7 +50,21 @@ size_t g_dumpBytes = 0;
 static void ledsIdle()     { leds.update(); net::poll(); }
 // Red LED: steady = power, slow flash = battery low (battery build).
 static LedMode pwrLed()    { return power::batteryLow() ? LedMode::SlowFlash : LedMode::On; }
-static void showIdle()     { leds.set(pwrLed(), LedMode::Off, LedMode::Off); }
+// Idle (no ECU): normally red = power. After a button wake the battery gauge shows for 3 s
+// (one LED: green > ~70 %, yellow 30-70 %, red < ~30 %). While charging, the gauge LED
+// flashes slowly; when charged, green is steady.
+static uint32_t gaugeUntil = 0;
+static void gaugeLeds(LedMode m) {
+    int g = power::gaugeLevel();
+    leds.set(g == 0 ? m : LedMode::Off, g == 1 ? m : LedMode::Off, g == 2 ? m : LedMode::Off);
+}
+static void showIdle() {
+    if (!cfg::HAS_BATTERY || power::gaugeLevel() < 0) { leds.set(pwrLed(), LedMode::Off, LedMode::Off); return; }
+    if (power::charge() == power::Charge::Full) leds.set(LedMode::Off, LedMode::Off, LedMode::On);
+    else if (power::charge() == power::Charge::Charging) gaugeLeds(LedMode::SlowFlash);
+    else if ((int32_t)(gaugeUntil - millis()) > 0) gaugeLeds(LedMode::On);
+    else leds.set(pwrLed(), LedMode::Off, LedMode::Off);
+}
 static void showDownload() { leds.set(pwrLed(), LedMode::On, LedMode::SlowFlash); }
 static void showSaved()    { leds.set(pwrLed(), LedMode::On, LedMode::On); }
 static void showFault()    { leds.set(LedMode::FastFlash, LedMode::FastFlash, LedMode::FastFlash); }
@@ -530,6 +549,7 @@ static void handleCommand(String line) {
     else if (cmd == "power") {
         if (!cfg::HAS_BATTERY) { Con.println("power: USB test board, never sleeps"); return; }
         int mv = power::batteryMv();
+        Con.printf("charging: %s\n", power::chargeText());
         Con.printf("battery: %s%s\nwoke by: %s\nECU plugged in: %s\nsleep in: %u s%s\n",
                    mv > 0 ? (String(mv) + " mV").c_str() : "no reading (divider not fitted?)",
                    power::batteryLow() ? " - LOW" : "", power::wakeReason(), power::ecuPresent() ? "yes" : "no",
@@ -591,6 +611,8 @@ void setup() {
     Con.begin(cfg::CONSOLE_BUF_SIZE);
     power::begin();          // before the LEDs: releases pins held during deep sleep, powers the RTC
     leds.begin();
+    if (strcmp(power::wakeReason(), "button") == 0 || strcmp(power::wakeReason(), "power-on") == 0)
+        gaugeUntil = millis() + cfg::GAUGE_SHOW_MS;
     showIdle();
     uint32_t t0 = millis();
     while (!Serial && millis() - t0 < 1500) delay(10);
@@ -627,7 +649,9 @@ void loop() {
     if (g_downloadRequested) { g_downloadRequested = false; if (!net::otaBusy()) state = State::Download; }
 
     switch (state) {
-        case State::Idle:
+        case State::Idle: {
+            static uint32_t lastLeds = 0;   // gauge / charging display can change while idle
+            if (millis() - lastLeds >= 250) { lastLeds = millis(); showIdle(); }
             if (millis() - lastProbe >= cfg::PROBE_INTERVAL_MS) {
                 lastProbe = millis();
                 Reply r = ecu.query(Cmd::RTY);
@@ -637,6 +661,7 @@ void loop() {
                 }
             }
             break;
+        }
 
         case State::Download: {
             if (net::otaBusy()) { state = State::Idle; break; }   // never talk to the ECU mid-update

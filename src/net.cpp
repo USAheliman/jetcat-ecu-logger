@@ -157,10 +157,14 @@ static void hStatus() {
     j += "\"ble\":{\"on\":" + String(bleStarted ? "true" : "false") + ",\"client\":" +
          String(bleClientConnected ? "true" : "false") + "},";
     j += "\"via\":\"" + String(g_router.viaBle() ? "ble" : "wifi") + "\",";
+    j += "\"board\":\"" + String(cfg::BOARD) + "\",";
     j += "\"ota_state\":\"" + String(otaStateName()) + "\",";
     j += "\"running_partition\":\"" + String(esp_ota_get_running_partition()->label) + "\",";
     j += "\"uptime_s\":" + String((unsigned long)(millis() / 1000)) + ",";
     j += "\"power\":{\"battery_mv\":" + String(power::batteryMv()) + ",\"low\":" + String(power::batteryLow() ? "true" : "false") +
+         ",\"charge\":\"" + String(power::charge() == power::Charge::Charging ? "charging" :
+                                     power::charge() == power::Charge::Full ? "charged" :
+                                     power::charge() == power::Charge::NotCharging ? "no" : "unknown") + "\"" +
          ",\"wake\":\"" + String(power::wakeReason()) + "\",\"awake_s_left\":" + String(power::awakeSecondsLeft()) +
          ",\"stay\":" + String(power::stayAwake() ? "true" : "false") + ",\"ecu_present\":" + String(power::ecuPresent() ? "true" : "false") + "}";
     sendJson(j + "}");

@@ -1,5 +1,6 @@
-# Builds the JetCat Logger Android app on every push that touches the app or the web page,
-# and puts the installable file on the "app-latest" release so the phone can download it.
+# Dev build of the JetCat Logger Android app on every push that touches the app or the web
+# page. Goes on the "app-latest" pre-release (version "dev-<commit>"); the app's update
+# check never offers it. Real releases: the "Release" action (release.yml).
 name: Android app
 
 on:
@@ -19,22 +20,39 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.10.2" }
+      - name: Signing key (repository secrets APP_KEYSTORE_B64 + APP_KEYSTORE_PASSWORD)
+        id: key
+        env: { KS: "${{ secrets.APP_KEYSTORE_B64 }}" }
+        run: |
+          if [ -z "$KS" ]; then
+            echo "::warning::No APP_KEYSTORE_B64 secret: the app is compiled and tested but NOT published (it could not update over the installed app)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$KS" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build the app
         working-directory: android/JetCatLogger
+        env: { KS_PW: "${{ secrets.APP_KEYSTORE_PASSWORD }}" }
         run: |
           EXTRA=""
           if [ -n "${{ vars.ONEDRIVE_CLIENT_ID }}" ]; then EXTRA="-PONEDRIVE_CLIENT_ID=${{ vars.ONEDRIVE_CLIENT_ID }}"; fi
-          gradle --no-daemon $EXTRA assembleDebug testDebugUnitTest
+          if [ "${{ steps.key.outputs.signed }}" = "true" ]; then
+            EXTRA="$EXTRA -PsigningStore=$RUNNER_TEMP/release.p12 -PsigningPassword=$KS_PW"
+          fi
+          gradle --no-daemon $EXTRA -PgitSha=${GITHUB_SHA::7} assembleDebug testDebugUnitTest
           cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/JetCatLogger.apk"
       - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.signed == 'true'
         with: { name: JetCatLogger-apk, path: JetCatLogger.apk }
-      - name: Publish to the app-latest release
+      - name: Publish to the app-latest pre-release
+        if: steps.key.outputs.signed == 'true'
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          NOTES="Built from ${GITHUB_SHA::7} on $(date -u '+%d %b %Y %H:%M') UTC. Install JetCatLogger.apk on the phone."
+          NOTES="Dev build ${GITHUB_SHA::7}, $(date -u '+%d %b %Y %H:%M') UTC. For testing; not offered by the app's update check."
           if gh release view app-latest >/dev/null 2>&1; then
             gh release upload app-latest JetCatLogger.apk --clobber
-            gh release edit app-latest --notes "$NOTES"
+            gh release edit app-latest --notes "$NOTES" --prerelease
           else
-            gh release create app-latest JetCatLogger.apk --title "JetCat Logger app (latest build)" --notes "$NOTES" --prerelease
+            gh release create app-latest JetCatLogger.apk --title "JetCat Logger app (dev build)" --notes "$NOTES" --prerelease
           fi

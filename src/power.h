@@ -8,6 +8,7 @@
 //  - Stay awake while the ECU is plugged in, and for cfg::AWAKE_AFTER_MS (10 min) after
 //    it is unplugged, after a button / power-on wake, or after the last phone or browser
 //    request. Never sleep during a download or a firmware update.
+//  - While charging (detected from the battery voltage), stay awake so the LEDs can show it.
 //  - Battery below cfg::BATT_CRITICAL_MV: radios off and sleep (wakes again on the ECU,
 //    re-checks, and goes straight back to sleep if still critical).
 #include <Arduino.h>
@@ -18,6 +19,13 @@ void poll();                   // from loop()
 bool ecuPresent();             // ECU +5 V on the wake pin (always false on the DevKitC)
 int  batteryMv();              // -1 = no battery sense (DevKitC, or divider not fitted)
 bool batteryLow();
+// Charging, worked out from the battery voltage (the XIAO has no charge-status pin):
+// a sustained rise means USB is charging it. Detected a few minutes after it starts.
+enum class Charge : uint8_t { Unknown, NotCharging, Charging, Full };
+Charge charge();
+const char* chargeText();
+// Battery gauge colour for the LEDs: 2 = green (>~70 %), 1 = yellow, 0 = red (<~30 %), -1 = no reading.
+int gaugeLevel();
 const char* wakeReason();      // "power-on", "ECU", "button", ...
 uint32_t awakeSecondsLeft();   // 0 on the DevKitC (never sleeps)
 void noteActivity();           // a phone/browser request: restart the 10-minute timer

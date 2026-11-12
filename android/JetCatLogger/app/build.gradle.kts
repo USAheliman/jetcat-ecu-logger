@@ -11,26 +11,36 @@ android {
         applicationId = "com.usaheliman.jetcatlogger"
         minSdk = 26
         targetSdk = 35
-        // Version numbers are Mehul's to bump once a build is proven.
-        versionCode = 1
-        versionName = "dev"
+        // Version: "dev-<commit>" for every build, except a release made by the GitHub
+        // "Release" action, which passes the number Mehul types in (-PappVersion=1.0.0).
+        // versionCode = minutes since 1 Jan 2026, so every build installs over an older one
+        // (dev or release) and the update check can tell which is newer.
+        val appVersion = (project.findProperty("appVersion") as String?)?.takeIf { it.isNotBlank() }
+        versionCode = ((System.currentTimeMillis() - 1767225600000L) / 60000L).toInt()
+        versionName = appVersion ?: ("dev-" + (project.findProperty("gitSha") as String? ?: "local"))
         buildConfigField("String", "ONEDRIVE_CLIENT_ID",
             "\"" + (project.findProperty("ONEDRIVE_CLIENT_ID") as String? ?: "") + "\"")
+        // Releases (app + logger firmware) are published on GitHub; the app reads this list.
+        buildConfigField("String", "RELEASES_API",
+            "\"https://api.github.com/repos/USAheliman/jetcat-ecu-logger/releases\"")
     }
-    // One fixed signing key (keystore/jetcat-logger.p12, kept in this private repo), so
-    // every build installs over the previous one and keeps the flights stored on the phone.
+    // Signing key: kept out of the (public) repo. GitHub builds get it from the repository
+    // secret APP_KEYSTORE_B64 (-PsigningStore=<file> -PsigningPassword=...), so every
+    // published build installs over the previous one and keeps the flights on the phone.
+    // A local build without it uses Android's debug key (fine for testing on a cable).
+    val signingStore = project.findProperty("signingStore") as String?
     signingConfigs {
-        create("jetcat") {
-            storeFile = file("../keystore/jetcat-logger.p12")
-            storePassword = "jetcatlogger"
+        if (signingStore != null) create("jetcat") {
+            storeFile = file(signingStore)
+            storePassword = project.findProperty("signingPassword") as String?
             keyAlias = "jetcat"
-            keyPassword = "jetcatlogger"
+            keyPassword = project.findProperty("signingPassword") as String?
             storeType = "pkcs12"
         }
     }
     buildTypes {
-        debug { signingConfig = signingConfigs.getByName("jetcat") }
-        release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("jetcat") }
+        debug { if (signingStore != null) signingConfig = signingConfigs.getByName("jetcat") }
+        release { isMinifyEnabled = false; if (signingStore != null) signingConfig = signingConfigs.getByName("jetcat") }
     }
     buildFeatures { buildConfig = true }
     // The pages are the logger's own: data/index.html at the top of the repo.

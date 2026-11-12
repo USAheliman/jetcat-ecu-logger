@@ -26,6 +26,8 @@ header h1{font-size:17px;margin:0;font-weight:650}
 #status{font-size:12.5px;color:var(--ink2);margin-top:2px}
 #progress{height:3px;background:var(--line);margin-top:8px;border-radius:2px;overflow:hidden;display:none}
 #progress div{height:100%;width:0;background:var(--accent);transition:width .4s}
+.bar{height:6px;background:var(--line);margin:8px 0;border-radius:3px;overflow:hidden}
+.bar div{height:100%;background:var(--accent);transition:width .3s}
 main{max-width:760px;margin:0 auto;padding:12px 16px}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom);z-index:5}
@@ -126,7 +128,8 @@ function battPct(mv){if(mv>=4200)return 100;if(mv<=3300)return 0;
   for(let i=1;i<LIPO_CURVE.length;i++){const [v1,p1]=LIPO_CURVE[i],[v0,p0]=LIPO_CURVE[i-1];
     if(mv<=v1)return Math.round(p0+(p1-p0)*(mv-v0)/(v1-v0));}return 100;}
 function battText(s){const p=s&&s.power;if(!p||!(p.battery_mv>0))return "";
-  return `battery ${(p.battery_mv/1000).toFixed(2)} V (~${battPct(p.battery_mv)}%)${p.low?" LOW":""}`;}
+  const c=p.charge==="charging"?" charging":p.charge==="charged"?" charged":"";
+  return `battery ${(p.battery_mv/1000).toFixed(2)} V (~${battPct(p.battery_mv)}%)${p.low?" LOW":""}${c}`;}
 function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this phone":"WiFi";}
 function heliName(serial){return helis[serial]||("ECU "+serial);}
 function flightTime(f){
@@ -441,7 +444,7 @@ function settingsView(){
       <div class="kv"><div class="k">Clock</div><div class="v" style="font-size:14px">${s.clock?esc(fmtDate(new Date(s.clock))):"not set"}${s.rtc?" · RTC":""}</div></div>
       <div class="kv"><div class="k">Stored</div><div class="v" style="font-size:14px">${s.flights} flights · ${s.flash_used_kb} / ${s.flash_total_kb} KB</div></div>
       <div class="kv"><div class="k">Connected by</div><div class="v" style="font-size:14px">${viaText(s.via)}</div></div>
-      ${battText(s)?`<div class="kv"><div class="k">Logger battery</div><div class="v" style="font-size:14px">${(s.power.battery_mv/1000).toFixed(2)} V · ~${battPct(s.power.battery_mv)}%${s.power.low?" · LOW":""}</div></div>`:""}
+      ${battText(s)?`<div class="kv"><div class="k">Logger battery</div><div class="v" style="font-size:14px">${(s.power.battery_mv/1000).toFixed(2)} V · ~${battPct(s.power.battery_mv)}%${s.power.low?" · LOW":""}${s.power.charge==="charging"?" · charging":s.power.charge==="charged"?" · charged":""}</div></div>`:""}
     </div>
     <div class="note">Last download: ${esc(s.last)}</div>
     <div class="btns"><button class="btn primary" onclick="downloadNow()">Download from ECU now</button>
@@ -554,6 +557,7 @@ async function loadFlights(){
 }
 let wasDownloading=false;
 async function pollStatus(){
+  if(window.__fwBusy)return;   // a firmware install owns the Bluetooth link
   try{
     status=await api("/api/status.json");
     const p=$("#progress");

@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- OneDrive upload only; all logger traffic goes over Bluetooth. -->
+    <!-- OneDrive upload and update downloads; all logger traffic goes over Bluetooth. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- One-tap app updates (Android asks the user once to allow it). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
@@ -28,7 +30,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Shares exported CSV files (cache/exports) via the system share sheet. -->
+        <!-- Shares exported CSV files (cache/exports) via the system share sheet, and hands
+             a downloaded app update (cache/updates) to Android's installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

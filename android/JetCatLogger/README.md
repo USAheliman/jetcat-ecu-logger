@@ -18,17 +18,33 @@ The Bluetooth link and the page bridge are adapted from Malcolm Messiter's LockD
 RXV2App (github.com/Mmessiter/LDRC_V2), used with his permission, GPL-3.0-or-later. So
 is this app.
 
-## Getting the app
+## Getting the app, and updates
 
-GitHub builds it on every change (`.github/workflows/android-app.yml`). The installable file
-is `JetCatLogger.apk` on the repo's **app-latest** release.
+**Releases.** Mehul publishes a release with GitHub's **Actions > Release > Run workflow**,
+typing the version (e.g. `1.0.0`) and the notes. That builds the app and the logger firmware
+for both boards, all stamped with that version, and publishes release `v1.0.0` with
+`JetCatLogger.apk`, `firmware-xiao_plus.bin`, `firmware-devkitc.bin` and `release.json`.
+Version numbers are only set there; every other build is `dev`.
 
-1. On the phone, open the release page in GitHub (signed in, because the repo is private).
-2. Download `JetCatLogger.apk` and open it.
-3. The first time, allow your browser to install apps when Android asks.
+- **First install:** download `JetCatLogger.apk` from the latest release on the phone and
+  open it (allow the browser to install apps when Android asks).
+- **App updates:** the app checks when its home screen opens (at most hourly), and from
+  Settings > Updates > *Check for app update*. A newer release offers **Update**; the first
+  time, Android asks to allow JetCat Logger to install updates.
+- **Logger firmware:** Settings > Updates > *Check for firmware updates* lists the releases
+  with their notes. **Install** downloads the firmware with the phone's internet and sends it
+  to the logger over Bluetooth (about a minute; keep the phone near the logger). The logger
+  restarts; tap it in the list to reconnect. PlatformIO uploads over USB or WiFi still work.
 
-Every build is signed with the same key (`keystore/jetcat-logger.p12`), so a new build
-installs over the old one and keeps the flights stored on the phone.
+**Dev builds.** Every push that touches the app or the pages builds `JetCatLogger.apk` on the
+**app-latest** pre-release (`dev-<commit>`), for testing. The update check never offers it.
+
+**Signing key.** Every published build is signed with the same key, so a new build installs
+over the old one and keeps the flights on the phone. The key is NOT in the repo: GitHub gets
+it from the repository secrets `APP_KEYSTORE_B64` (the .p12 file in base64) and
+`APP_KEYSTORE_PASSWORD`. Keep a backup of the .p12 and its password: without them no future
+build can update the installed app. (The key used before 12 Nov 2026 was in the repo while it
+was private; it was retired when the repo went public.)
 
 ## Using it
 

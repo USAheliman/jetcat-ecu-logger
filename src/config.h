@@ -7,6 +7,7 @@
 namespace cfg {
 
 #if defined(BOARD_XIAO_PLUS)
+constexpr const char* BOARD = "xiao_plus";      // release firmware file: firmware-xiao_plus.bin
 // ---------------------------------------------------------------- Seeed XIAO ESP32-S3 Plus
 // Battery build. Pin sources: Seeed XIAO ESP32-S3 wiki (pin map, Plus back pads) and
 // Espressif ESP32-S3 GPIO reference (RTC GPIOs 0-21 can wake from deep sleep; GPIO2 =
@@ -34,6 +35,7 @@ constexpr int PIN_I2C_SCL = 6;          // D5
 
 constexpr bool HAS_BATTERY = true;
 #else
+constexpr const char* BOARD = "devkitc";        // release firmware file: firmware-devkitc.bin
 // ---------------------------------------------------------------- ESP32-S3 DevKitC-1 (test board)
 // ECU serial: 3.3 V TTL measured on ECU pin 1 (1 Nov 2026), so direct connection.
 constexpr int PIN_ECU_RX = 18;          // ESP32 RX  <- ECU phone-socket pin 1 (TxD)
@@ -70,6 +72,15 @@ constexpr uint32_t BATT_CHECK_MS      = 10000;   // battery read interval
 constexpr int      BATT_ABSENT_MV     = 2500;    // below this the divider is not fitted / no reading: ignore
 constexpr int      BATT_LOW_MV        = 3500;    // red LED flashes, "low" in status
 constexpr int      BATT_CRITICAL_MV   = 3300;    // radios off and deep sleep (not during a download)
+// Charging (no charge-status pin on the XIAO, so it is worked out from the battery voltage):
+constexpr int      CHG_RISE_MV        = 20;      // rise above the lowest reading of the last 15 min = charging (to tune on the bench)
+constexpr uint32_t CHG_SETTLE_MS      = 120000;  // not judged in the first 2 min awake (WiFi-off rebound)
+constexpr int      CHG_DROP_MV        = 40;      // fall below the highest reading while charging = unplugged
+constexpr int      CHG_FULL_MV        = 4150;    // charging and at/above this = full
+// Battery gauge on the LEDs (loaded voltage while awake; roughly >70 % / 30-70 % / <30 %):
+constexpr int      GAUGE_GREEN_MV     = 3920;
+constexpr int      GAUGE_YELLOW_MV    = 3700;
+constexpr uint32_t GAUGE_SHOW_MS      = 3000;    // shown this long after a button wake
                                                  // The pack's protection circuit is the last line of defence.
 
 // Names on the air

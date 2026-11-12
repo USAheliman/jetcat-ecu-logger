@@ -18,6 +18,59 @@ static uint32_t lastBattCheck = 0;
 static uint8_t criticalCount = 0;
 static bool lowReported = false;
 
+// Battery history for charge detection: one reading every 3rd check (30 s), last 15 minutes.
+static const int HIST_N = 30;
+static uint8_t histSkip = 0;
+static int hist[HIST_N];
+static int histCount = 0, histPos = 0;
+static Charge chg = Charge::Unknown;
+static int chgPeak = 0;            // highest reading while charging
+
+static void judgeCharge() {
+    if (battMv <= 0) { chg = Charge::Unknown; return; }
+    // Readings from the first 2 min awake are left out: the battery recovers by tens of mV
+    // once WiFi is switched off, which would look like charging.
+    if (millis() < cfg::CHG_SETTLE_MS) return;
+    if (chg != Charge::Unknown && ++histSkip < 3) return;
+    histSkip = 0;
+    hist[histPos] = battMv; histPos = (histPos + 1) % HIST_N; if (histCount < HIST_N) histCount++;
+    if (histCount < 3 && chg == Charge::Unknown) return;
+    int lo = 100000;
+    for (int i = 0; i < histCount; ++i) lo = min(lo, hist[i]);
+    // average of the last 3 readings, to ride over ADC noise
+    int recent = 0, nr = min(3, histCount);
+    for (int k = 1; k <= nr; ++k) recent += hist[(histPos - k + HIST_N) % HIST_N];
+    recent /= nr;
+    Charge was = chg;
+    if (chg == Charge::Charging || chg == Charge::Full) {
+        chgPeak = max(chgPeak, recent);
+        if (recent < chgPeak - cfg::CHG_DROP_MV) chg = Charge::NotCharging;          // unplugged
+        else if (recent >= cfg::CHG_FULL_MV) chg = Charge::Full;
+        else chg = Charge::Charging;
+    } else if (recent >= lo + cfg::CHG_RISE_MV) {
+        chg = Charge::Charging; chgPeak = recent;
+    } else {
+        chg = Charge::NotCharging;
+    }
+    if (chg != was && was != Charge::Unknown) Con.printf("[power] %s (battery %d mV)\n", chargeText(), recent);
+    if (chg != was && was == Charge::Unknown && chg == Charge::Charging) Con.printf("[power] charging (battery %d mV)\n", recent);
+    if (chg == Charge::NotCharging && was == Charge::Charging) { histCount = 0; histPos = 0; }  // unplugged: fresh baseline
+}
+
+Charge charge() { return chg; }
+const char* chargeText() {
+    switch (chg) {
+        case Charge::Charging: return "charging";
+        case Charge::Full: return "charged";
+        case Charge::NotCharging: return "not charging";
+        default: return "unknown (judged after 2 min awake)";
+    }
+}
+int gaugeLevel() {
+    if (battMv <= 0) return -1;
+    return battMv >= cfg::GAUGE_GREEN_MV ? 2 : battMv >= cfg::GAUGE_YELLOW_MV ? 1 : 0;
+}
+
 static int readBatteryMv() {
     if (cfg::PIN_BATT_ADC < 0) return -1;
     uint32_t sum = 0;
@@ -132,13 +185,15 @@ void poll() {
     if (now - lastBattCheck >= cfg::BATT_CHECK_MS) {
         lastBattCheck = now;
         battMv = readBatteryMv();
+        judgeCharge();
         if (batteryLow() && !lowReported) { Con.printf("[power] battery low: %d mV - charge soon\n", battMv); lowReported = true; }
         criticalCount = (battMv > 0 && battMv < cfg::BATT_CRITICAL_MV) ? criticalCount + 1 : 0;
     }
 
     // Anything that must keep the logger awake restarts the 10-minute timer.
     bool busy = g_downloading || net::otaBusy();
-    if (ecuPresent() || busy || stay || net::bleConnected()) extend();
+    // Charging keeps it awake so the LEDs show it; once full the normal 10-minute rule applies.
+    if (ecuPresent() || busy || stay || net::bleConnected() || chg == Charge::Charging) extend();
 
     if (busy) return;   // never sleep mid-download or mid-update
     if (criticalCount >= 3) { sleepNow("battery critical", !ecuPresent()); return; }
