@@ -1,0 +1,680 @@
+// JetCat ECU Logger app (Android) :: LoggerBle.kt
+// Adapted, with his permission, from Malcolm Messiter's LockDownRadioControl RXV2App
+// (github.com/Mmessiter/LDRC_V2, RXV2App/android/.../Rxv2Ble.kt), GPL-3.0-or-later.
+// Changes for the logger: its own service UUIDs (src/ble_bridge.h), the name
+// "JetCat-Logger", and first-byte windows for the logger's routes.
+//
+// Original header (LockDownRadioControl — RXV2App (Android) :: Rxv2Ble.kt):
+//
+// The Kotlin twin of the iOS BleLink. Speaks the firmware's HTTP-over-BLE
+// framing (RXV2/src/BleConfig.h):
+//   request  (app → rx):  first write  'Q'<totalLen>'|'<payload>,
+//                         continuations '+'<payload>
+//   payload:              "METHOD path[?query]\n{Header: v\n}\n\nbody"
+//   response (rx → app):  first notify  'R'<code>'|'<type>'|'<len>'|'<loc>'\n'
+//                         then raw body bytes until <len> received.
+//   stream (rx → app):    'S|us0,..,us15|age\n' pushed between responses.
+//
+// One request in flight at a time; requests queue and run in order. All
+// pipeline state is touched only on the main Looper (like the iOS main
+// queue), so GATT callbacks post here.
+
+package com.usaheliman.jetcatlogger
+
+import android.annotation.SuppressLint
+import android.bluetooth.*
+import android.bluetooth.le.*
+import android.content.Context
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.os.ParcelUuid
+import java.util.UUID
+
+@SuppressLint("MissingPermission")
+class LoggerBle(private val context: Context) {
+
+    companion object {
+        // -85 let a link two rooms away connect and then fail (Malcolm
+        // 2026-09-12). Throughput collapses long before the connection does,
+        // and this link carries whole web pages.
+        const val WEAK_RSSI = -78      // at or below this, too weak to WORK
+        const val SMOOTHING = 0.3      // ~0.7 s to follow a change
+        const val PUBLISH_EVERY_MS = 1000L
+        fun signalWord(rssi: Int) = when {
+            rssi >= -65 -> "Strong"
+            rssi >= -77 -> "Good"
+            else        -> "Too far"
+        }
+        fun tooWeak(rssi: Int) = rssi != 0 && rssi <= WEAK_RSSI
+        // The logger's own service (firmware src/ble_bridge.h), never an LDRC receiver's.
+        val SERVICE: UUID  = UUID.fromString("4a430001-7c2e-4f1b-9d6a-1b05e1c0f3a1")
+        val REQ: UUID      = UUID.fromString("4a430002-7c2e-4f1b-9d6a-1b05e1c0f3a1")
+        val RESP: UUID     = UUID.fromString("4a430003-7c2e-4f1b-9d6a-1b05e1c0f3a1")
+        val CCCD: UUID     = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+    }
+
+    data class Discovered(val device: BluetoothDevice, val name: String, val rssi: Int)
+    class Response(val code: Int, val contentType: String, val location: String, val body: ByteArray)
+
+    sealed class State {
+        object Idle : State()
+        object Scanning : State()
+        data class Connecting(val name: String) : State()
+        data class Reconnecting(val name: String) : State()
+        data class Ready(val name: String) : State()
+        data class Failed(val msg: String) : State()
+    }
+
+    // ── Observable state (simple listener callbacks; UI is a plain Activity) ─
+    var onState: ((State) -> Unit)? = null
+    var onFound: ((List<Discovered>) -> Unit)? = null
+    var onStreamFrame: ((String) -> Unit)? = null
+
+    var state: State = State.Idle
+        private set(v) { field = v; ui.post { onState?.invoke(v) } }
+    private val found = LinkedHashMap<String, Discovered>()
+
+    // The whole BLE pipeline runs on its OWN thread, NOT the main/UI thread.
+    // On Android the WebView renders in-process; if radio parsing shared the
+    // UI thread, page rendering and Bluetooth would block each other and
+    // everything would crawl (unlike iOS, where WebKit is out-of-process).
+    // Only the public callbacks are marshalled to the UI thread.
+    private val bgThread = HandlerThread("logger-ble").apply { start() }
+    private val bg = Handler(bgThread.looper)
+    private val ui = Handler(Looper.getMainLooper())
+    private val adapter: BluetoothAdapter? =
+        (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+    private var scanner: BluetoothLeScanner? = null
+    // ONE BluetoothGatt at a time (5.204). A second connectGatt while an
+    // earlier one is still open (a direct connect by MAC that never gave up,
+    // then a tap in the list) makes two clients on one link: Android then
+    // hands EVERY notification to both, each reply arrives twice, and a
+    // header lands where a body was due. The old one is closed before a new
+    // one is made, and callbacks from any object other than this one are
+    // ignored. Read from binder threads too, hence volatile.
+    @Volatile private var gatt: BluetoothGatt? = null
+    private fun closeOldGatt(why: String) {
+        val old = gatt ?: return
+        gatt = null
+        runCatching { old.disconnect() }; runCatching { old.close() }
+        note("closed the previous link ($why)")
+    }
+    private var reqChr: BluetoothGattCharacteristic? = null
+    private var respChr: BluetoothGattCharacteristic? = null
+    private var mtu = 23
+
+    // ── Single-request pipeline ────────────────────────────────────
+    private class Pending(val payload: ByteArray, val cb: (kotlin.Result<Response>) -> Unit,
+                          val rawChunks: List<ByteArray>? = null,
+                          val firstByteMs: Long = 12000,
+                          val id: Int = 0,                 // echoed by the receiver as "#id" (0.9.746)
+                          val path: String = "")           // for the link log only
+    private val queue = ArrayDeque<Pending>()
+    private var inFlight: Pending? = null
+    // Request ids (0.9.746). The bridge had no way to tie a reply to a request:
+    // when we gave up on a slow one and sent the next, the receiver dropped
+    // the new one and delivered the OLD reply, which we took as the answer to
+    // the NEW request - and every reply after that was one behind. Malcolm's
+    // update page read another endpoint's reply as state.json and announced
+    // "no WiFi here" beside the router. Every request now carries "X-Req: n";
+    // a receiver that knows about it echoes "#n" in the location slot, and a
+    // reply whose id is not the one we are waiting for is swallowed and
+    // dropped. Old receivers echo nothing, and behave exactly as before.
+    // Taken on the caller's thread (the page bridge, the install thread, the
+    // recorder all call request()) - atomic, or two callers could draw the same
+    // number and a stale reply would pass as fresh (5.204).
+    private val nextReqId = java.util.concurrent.atomic.AtomicInteger(1)
+    // Reply reassembly lives in ReplyFramer (pure Kotlin, unit-tested): a
+    // packet that parses as a header IS a header, whatever state we are in,
+    // and a reply whose id is not the one we wait for is swallowed (5.204).
+    private val framer = ReplyFramer()
+    private var timeout: Runnable? = null
+
+    // ── Link log ───────────────────────────────────────────────────
+    // What the link did, oldest first, as iOS has had since 0.9.816: a failed
+    // install can then be READ (Send debug data on the Help page, or the
+    // bracket on the install's failure line) instead of guessed at. Counters
+    // since the app started; the install thread differences them.
+    private val logLines = ArrayDeque<String>()
+    private val logClock = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+    @Volatile var timeouts = 0; private set
+    @Volatile var staleReplies = 0; private set
+    @Volatile var resyncs = 0; private set
+    @Volatile var badFrames = 0; private set
+    @Volatile var drops = 0; private set
+    fun note(s: String) {
+        synchronized(logLines) {
+            logLines.addLast(logClock.format(java.util.Date()) + "  " + s)
+            while (logLines.size > 80) logLines.removeFirst()
+        }
+    }
+    fun logText(): String = synchronized(logLines) { logLines.joinToString("\n") }
+    class Counts(val timeouts: Int, val stale: Int, val resyncs: Int, val bad: Int, val drops: Int) {
+        /** "2 timeouts, 1 stale reply, 3 resyncs" for the difference against an earlier snapshot; "" when nothing happened. */
+        fun since(then: Counts): String {
+            val parts = ArrayList<String>()
+            fun add(n: Int, one: String, many: String) { if (n > 0) parts.add("$n " + (if (n == 1) one else many)) }
+            add(timeouts - then.timeouts, "timeout", "timeouts")
+            add(stale - then.stale, "stale reply", "stale replies")
+            add(resyncs - then.resyncs, "resync", "resyncs")
+            add(bad - then.bad, "bad frame", "bad frames")
+            add(drops - then.drops, "drop", "drops")
+            return parts.joinToString(", ")
+        }
+    }
+    fun counts() = Counts(timeouts, staleReplies, resyncs, badFrames, drops)
+    private val txChunks = ArrayDeque<ByteArray>()   // outgoing request chunks, fed by onCharacteristicWrite
+
+    private fun writeNextChunk(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+        val chunk = txChunks.removeFirstOrNull()
+        if (chunk == null) {
+            // a raw OTA batch has no reply to wait for — done when drained
+            if (inFlight?.rawChunks != null)
+                finish(kotlin.Result.success(Response(200, "", "", ByteArray(0))))
+            return
+        }
+        // Write-without-response when the characteristic allows it: the BLE
+        // link layer still guarantees delivery AND order, but there is no
+        // ATT round trip per chunk — several chunks ride one connection
+        // event instead of one each. onCharacteristicWrite still fires when
+        // the stack is ready for the next chunk, so sequencing is kept.
+        val wnr = (c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+        writeChar(g, c, chunk, noResp = wnr)
+    }
+
+    // ── Scanning ────────────────────────────────────────────────────
+    // Smoothed signal per device, published on a slow tick (see the scan callback).
+    private val smoothRssi = HashMap<String, Double>()
+    private var publishPending = false
+    private val publishRunnable = Runnable { publishPending = false; publishFound() }
+    private fun schedulePublish() {
+        if (publishPending) return
+        publishPending = true
+        ui.postDelayed(publishRunnable, PUBLISH_EVERY_MS)
+    }
+    private fun publishFound() {
+        val list = synchronized(found) {
+            smoothRssi.forEach { (addr, v) ->
+                found[addr]?.let { found[addr] = Discovered(it.device, it.name, Math.round(v).toInt()) }
+            }
+            found.values.sortedByDescending { it.rssi }
+        }
+        ui.post { onFound?.invoke(list) }
+    }
+
+    fun startScan() {
+        // Only post Failed once: MainActivity answers Failed with showScanner(),
+        // which scans again — with the adapter off that was an endless loop of
+        // list rebuilds and toasts (2026-09-16 review).
+        val a = adapter ?: run { if (state !is State.Failed) state = State.Failed("Bluetooth unavailable"); return }
+        if (!a.isEnabled) { if (state !is State.Failed) state = State.Failed("Bluetooth is switched off"); return }
+        found.clear(); smoothRssi.clear(); onFound?.invoke(emptyList())
+        state = State.Scanning
+        scanner = a.bluetoothLeScanner
+        // No hardware filter — Samsung/Qualcomm offloaded scanners miss
+        // 128-bit UUIDs; match the service UUID in software (onScanResult).
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        runCatching { scanner?.startScan(null, settings, scanCb) }
+            .onFailure { state = State.Failed("Bluetooth permission needed") }
+    }
+
+    fun stopScan() {
+        ui.removeCallbacks(publishRunnable)
+        publishPending = false
+        runCatching { scanner?.stopScan(scanCb) }
+    }
+
+    private val scanCb = object : ScanCallback() {
+        override fun onScanResult(type: Int, r: ScanResult) {
+            val uuids = r.scanRecord?.serviceUuids
+            if (uuids == null || uuids.none { it.uuid == SERVICE }) return
+            // The real name rides the scan RESPONSE; adv-only results have a
+            // null deviceName. Never let those downgrade a name we already
+            // captured (device.name is Android's stale cache, "JetCat-Logger" is our
+            // placeholder of last resort).
+            synchronized(found) {
+                val name = r.scanRecord?.deviceName
+                    ?: found[r.device.address]?.name
+                    ?: r.device.name ?: "JetCat-Logger"
+                // Every advertisement feeds an average; the display is refreshed
+                // on a slow tick, because showing each one made the number a blur.
+                val prev = smoothRssi[r.device.address]
+                val avg = if (prev == null) r.rssi.toDouble() else prev + SMOOTHING * (r.rssi - prev)
+                smoothRssi[r.device.address] = avg
+                val isNew = !found.containsKey(r.device.address)
+                found[r.device.address] = Discovered(r.device, name,
+                    if (isNew) r.rssi else found[r.device.address]!!.rssi)
+                if (isNew) publishFound()          // a new receiver shows at once
+            }
+            schedulePublish()
+        }
+    }
+
+    // ── Connect / disconnect ────────────────────────────────────────
+    private var connName = "JetCat-Logger"   // scan-time name; g.device.name is a stale cache
+    private var lastDevice: BluetoothDevice? = null
+    private var userDisconnect = false
+
+    // A disconnect is only worth riding through when the receiver is known
+    // to be rebooting deliberately (install / config save / fly). Plain
+    // browsing never arms this — a disconnect then = model switched off →
+    // straight back to the scanner (Malcolm 2026-08-07).
+    @Volatile var rebootishUntil = 0L
+    // Set from MainActivity's onResume/onPause. A drop while the app is in the
+    // background with no install in flight is the receiver's idle watchdog
+    // letting a silent app go; chasing it would reconnect, go silent, be
+    // dropped - every few minutes. Not ridden out (5.95).
+    @Volatile var appInForeground = true
+    // How long the drop that follows is ridden out: 90 s covers a config-save
+    // reboot; a firmware install asks for more (5.93 - DongleSim's update
+    // "just sat there": the OTA runner was still polling after the link had
+    // given up at 90 s, so the page never learned the update had gone in).
+    @Volatile var rebootWindowMs = 90_000L
+    fun noteRebootish(ms: Long, windowMs: Long = 90_000L) {
+        val until = System.currentTimeMillis() + ms
+        if (until > rebootishUntil) { rebootishUntil = until; rebootWindowMs = windowMs }
+    }
+    private var reconnectUntil = 0L
+    /** True after an UNEXPECTED drop (not a reboot we asked for, not the
+     *  pilot leaving) until the app reads it - so the scanner can re-arm
+     *  auto-connect when the reconnect window closes (0.9.746). */
+    @Volatile var lastDropUnexpected = false
+
+    // connectGatt can sit for half a minute before Android gives up, and out
+    // of range it may never report at all - the app just looks stuck (Malcolm
+    // 2026-09-12: "it fails slowly and I have to quit the app"). Give it a
+    // deadline, and when the signal was weak to begin with, say so plainly.
+    private var connectWatchdog: Runnable? = null
+    private var connectingRssi = 0
+
+    private fun armConnectWatchdog(name: String, rssi: Int, ms: Long = 12_000) {
+        cancelConnectWatchdog()
+        connectingRssi = rssi
+        val r = Runnable {
+            if (state !is State.Connecting) return@Runnable
+            runCatching { gatt?.disconnect(); gatt?.close() }
+            gatt = null
+            state = State.Failed(
+                if (rssi != 0 && rssi <= WEAK_RSSI)
+                    "Too far away. The signal from $name was weak ($rssi dBm) - get closer and tap it again."
+                else
+                    "$name did not answer. Get closer, check it is switched on, and tap it again.")
+        }
+        connectWatchdog = r
+        ui.postDelayed(r, ms)
+    }
+    private fun cancelConnectWatchdog() { connectWatchdog?.let { ui.removeCallbacks(it) }; connectWatchdog = null }
+
+    fun connect(d: Discovered) {
+        stopScan()
+        connName = d.name
+        lastDevice = d.device
+        userDisconnect = false
+        state = State.Connecting(d.name)
+        armConnectWatchdog(d.name, d.rssi)
+        // Remember the MAC so the NEXT launch can connect directly
+        // (fastConnect) without waiting for a scan to hear an advert.
+        context.getSharedPreferences("scanner", android.content.Context.MODE_PRIVATE)
+            .edit().putString("lastAddr", d.device.address).putInt("lastRssi", d.rssi).apply()
+        closeOldGatt("connecting to ${d.name}")
+        note("connect ${d.name} (${d.rssi} dBm)")
+        gatt = d.device.connectGatt(context, false, gattCb, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    // Instant auto-connect (Malcolm 2026-08-17): connect straight to the
+    // stored MAC, skipping the advertisement wait. Returns false when
+    // nothing is stored or Bluetooth is unavailable — caller falls back to
+    // the scan (which keeps running anyway so the list still populates).
+    fun fastConnect(name: String, addr: String): Boolean {
+        val a = adapter ?: return false
+        if (!a.isEnabled) return false
+        // No RSSI here - this connects by stored MAC without scanning. Use the
+        // strength recorded at the END of the last session: if the model was far
+        // away then, scan and let the pilot choose rather than connecting blind.
+        val lastRssi = context.getSharedPreferences("scanner", android.content.Context.MODE_PRIVATE)
+            .getInt("lastRssi", 0)
+        if (tooWeak(lastRssi)) return false
+        val dev = runCatching { a.getRemoteDevice(addr) }.getOrNull() ?: return false
+        connName = name
+        lastDevice = dev
+        userDisconnect = false
+        state = State.Connecting(name)
+        closeOldGatt("fast connect to $name")
+        note("fast connect $name by address")
+        // Deadline as for a tap in the list: a direct connect that never
+        // reports would otherwise sit for ever (5.204).
+        armConnectWatchdog(name, lastRssi, 20_000)
+        gatt = dev.connectGatt(context, false, gattCb, BluetoothDevice.TRANSPORT_LE)
+        return true
+    }
+
+    fun disconnect() {
+        cancelConnectWatchdog()
+        userDisconnect = true
+        // No GATT (the link had already dropped, or we are between reconnect
+        // attempts): nothing will call back, so go Idle here — otherwise the
+        // app stays on a dead page ("Load another model" did nothing).
+        val g = gatt
+        if (g == null) state = State.Idle else g.disconnect()
+    }
+
+    // Quietly re-establish the link after an unexpected drop — above all a
+    // firmware install, where the receiver reboots mid-session and comes
+    // back ~20 s later. The web page keeps polling the whole time; as soon
+    // as the link is back its requests start answering again, so the
+    // update flow completes instead of dying at the reboot.
+    private fun tryReconnect() {
+        if (userDisconnect) { state = State.Idle; return }   // the pilot chose to leave meanwhile
+        val d = lastDevice ?: run { state = State.Idle; return }
+        if (System.currentTimeMillis() > reconnectUntil) { note("reconnect window closed"); state = State.Idle; return }
+        closeOldGatt("reconnecting")
+        note("reconnect attempt")
+        gatt = d.connectGatt(context, false, gattCb, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    // ── Public request API ──────────────────────────────────────────
+    fun request(method: String, path: String, headers: Map<String, String>,
+                body: ByteArray?, cb: (kotlin.Result<Response>) -> Unit) {
+        val id = nextReqId.getAndUpdate { if (it >= 999_999) 1 else it + 1 }
+        val sb = StringBuilder("$method $path\n")
+        sb.append("X-Req: $id\n")
+        for ((k, v) in headers) sb.append("$k: $v\n")
+        sb.append("\n")
+        val head = sb.toString().toByteArray(Charsets.UTF_8)
+        val payload = if (body != null) head + body else head
+        bg.post {
+            if (state !is State.Ready) {
+                // Fail fast (notably while quietly reconnecting after a
+                // firmware-install reboot) so page polls keep their cadence.
+                cb(kotlin.Result.failure(Exception("Not connected")))
+                return@post
+            }
+            // A flight-controller read through /api/msp can hold the receiver
+            // longer than a page: Rotorflight meters big replies out at
+            // ~0.5-0.8 s per 58-byte chunk (588-byte adjustment table ~6 s)
+            // and the receiver waits up to 12 s for them (fw 0.9.560).
+            // Match the iOS table (BleLink.firstByteWindow) so the two apps
+            // behave the same. The window must be at least as long as the
+            // receiver is willing to wait, or we abandon a request it is still
+            // working on and hand the page our own timeout notice instead.
+            // How long to wait for the first byte of a reply. The logger answers almost
+            // everything at once; a flight's CSV is built from its stored log first.
+            val window = when {
+                path.startsWith("/api/flight")       -> 15000L
+                path.startsWith("/api/flights")      -> 10000L
+                path.startsWith("/api/bleota")       -> 30000L
+                else                                 -> 6000L
+            }
+            queue.addLast(Pending(payload, cb, firstByteMs = window, id = id, path = path))
+            pump()
+        }
+    }
+
+    /** Max payload bytes per OTA chunk ([0xA5] + 4-byte offset overhead). */
+    fun otaChunkSize(): Int = ((mtu - 3).coerceAtMost(240) - 5).coerceAtLeast(64)
+
+    /** Stream pre-framed raw OTA chunks ([0xA5][offset LE][data]) through the
+     *  ordered write pipeline; completes when the last write is accepted.
+     *  Flow control is the ATT layer itself + periodic /api/bleota/status. */
+    fun otaSend(chunks: List<ByteArray>, cb: (kotlin.Result<Unit>) -> Unit) {
+        bg.post {
+            if (state !is State.Ready) { cb(kotlin.Result.failure(Exception("Not connected"))); return@post }
+            queue.addLast(Pending(ByteArray(0), { r -> cb(r.map { }) }, rawChunks = chunks, path = "ota batch"))
+            pump()
+        }
+    }
+
+    // ── Pipeline internals (main thread only) ───────────────────────
+    private fun pump() {
+        if (inFlight != null) return
+        val g = gatt ?: return
+        val req = reqChr ?: return
+        if (state !is State.Ready) return
+        val next = queue.removeFirstOrNull() ?: return
+        inFlight = next
+        framer.reset()
+        txChunks.clear()
+
+        next.rawChunks?.let { raw ->
+            txChunks.addAll(raw)
+            writeNextChunk(g, req)
+            armTimeout(20000)
+            return
+        }
+
+        val prefix = "Q${next.payload.size}|".toByteArray(Charsets.UTF_8)
+        // Cap request chunks at 240 bytes. Two reasons: Android hard-rejects
+        // GATT writes over 512 bytes (with MTU 517, mtu-3 = 514 -> instant
+        // IllegalArgumentException that KILLS the BLE thread — found when the
+        // editor synced a 3 KB template on navigation), and 240 is the size
+        // every phone in this house has proven to carry reliably.
+        val attMax = (mtu - 3).coerceAtLeast(20).coerceAtMost(240)
+        // Small requests (the polls) go write-without-response so the reply
+        // rides the next radio event — halves per-poll latency. Larger ones
+        // use acknowledged, chunked writes for ordering.
+        if (prefix.size + next.payload.size <= attMax &&
+            (req.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+            writeChar(g, req, prefix + next.payload, noResp = true)
+        } else {
+            // Multi-chunk request. Android accepts ONE GATT write at a time:
+            // issuing the next chunk before onCharacteristicWrite fires makes
+            // it silently rejected — every chunk after the first was lost and
+            // a 3 KB upload turned into a 12 s timeout. Queue the chunks and
+            // let the completion callback feed them out one by one.
+            txChunks.clear()
+            var off = 0
+            val take = (attMax - prefix.size).coerceAtMost(next.payload.size)
+            txChunks.addLast(prefix + next.payload.copyOfRange(0, take))
+            off = take
+            while (off < next.payload.size) {
+                val n = (attMax - 1).coerceAtMost(next.payload.size - off)
+                val cont = ByteArray(1 + n); cont[0] = '+'.code.toByte()
+                System.arraycopy(next.payload, off, cont, 1, n)
+                txChunks.addLast(cont)
+                off += n
+            }
+            writeNextChunk(g, req)
+        }
+        // Generous first-byte window: /api/firmware/check blocks the receiver
+        // for up to ~8 s of dead air while it fetches manifests over HTTPS.
+        armTimeout(next.firstByteMs)
+    }
+
+    private fun writeChar(g: BluetoothGatt, c: BluetoothGattCharacteristic,
+                          data: ByteArray, noResp: Boolean) {
+        val type = if (noResp) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                   else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        if (Build.VERSION.SDK_INT >= 33) {
+            g.writeCharacteristic(c, data, type)
+        } else {
+            @Suppress("DEPRECATION")
+            run { c.writeType = type; c.value = data; g.writeCharacteristic(c) }
+        }
+    }
+
+    private fun armTimeout(ms: Long) {
+        timeout?.let { bg.removeCallbacks(it) }
+        timeout = Runnable {
+            timeouts++
+            val f = inFlight
+            note("timeout: " + (f?.path ?: "?") + " #" + (f?.id ?: 0) +
+                 (if (framer.expected >= 0) " (mid-body, ${framer.expected} expected)" else " (no header)"))
+            finish(kotlin.Result.failure(Exception("Receiver did not answer (timeout)")))
+        }.also { bg.postDelayed(it, ms) }
+    }
+
+    private fun finish(result: kotlin.Result<Response>) {
+        timeout?.let { bg.removeCallbacks(it) }; timeout = null
+        framer.reset()
+        val done = inFlight; inFlight = null
+        done?.cb?.invoke(result)
+        pump()
+    }
+
+    private val events = ArrayList<ReplyFramer.Event>(4)
+
+    private fun handleNotify(data: ByteArray) {
+        val f = inFlight
+        if (f == null) {
+            // Between requests: only pushed channel frames appear.
+            if (data.isNotEmpty() && data[0] == 'S'.code.toByte()) {
+                val s = String(data, Charsets.UTF_8)
+                if (s.startsWith("S|")) ui.post { onStreamFrame?.invoke(s) }
+            }
+            return
+        }
+        armTimeout(5000)
+        events.clear()
+        framer.feed(data, f.id, events)
+        for (e in events) when (e) {
+            is ReplyFramer.Event.Stream -> { val s = e.line; ui.post { onStreamFrame?.invoke(s) } }
+            is ReplyFramer.Event.StaleDropped -> {
+                staleReplies++
+                note("stale reply #${e.id ?: 0} dropped while waiting for ${f.path} #${f.id}")
+                armTimeout(f.firstByteMs)   // back to waiting for ours
+            }
+            is ReplyFramer.Event.Resynced -> {
+                resyncs++
+                note("resync (${e.why}) waiting for ${f.path} #${f.id}")
+            }
+            is ReplyFramer.Event.Bad -> {
+                badFrames++
+                note("bad framing (${e.why}) for ${f.path} #${f.id}")
+                finish(kotlin.Result.failure(Exception("Bad response framing")))
+                return
+            }
+            is ReplyFramer.Event.Done -> {
+                val r = e.reply
+                finish(kotlin.Result.success(Response(r.code, r.contentType, r.location, r.body)))
+                return
+            }
+        }
+    }
+
+    private fun cleanup(msg: String) {
+        timeout?.let { bg.removeCallbacks(it) }; timeout = null
+        framer.reset()
+        inFlight?.cb?.invoke(kotlin.Result.failure(Exception(msg))); inFlight = null
+        while (queue.isNotEmpty()) queue.removeFirst().cb.invoke(kotlin.Result.failure(Exception(msg)))
+        reqChr = null; respChr = null
+    }
+
+    // ── GATT callbacks (binder thread → post to main) ──────────────
+    private val gattCb = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (g !== gatt) {
+                // Not the link we hold (a closed one reporting late): never a
+                // second client on the receiver (5.204).
+                runCatching { g.disconnect() }; runCatching { g.close() }
+                note("stale link object reported state $newState (status $status) - closed")
+                return
+            }
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                note("link up (status $status)")
+                // ONE GATT op at a time on Android. Request MTU first; the
+                // fast-connection request is issued from onMtuChanged (once
+                // the MTU exchange has completed) so it isn't silently
+                // dropped. Without the fast interval the receiver's TX
+                // buffer can't drain and large replies stall part-way.
+                g.requestMtu(517)
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                bg.post {
+                    // status: 8 supervision timeout (radios lost each other),
+                    // 19 the receiver ended it, 22 we ended it, 62 never
+                    // established, 133 Android's catch-all - the receiver logs
+                    // its own view of the same drop ("reason 0x..").
+                    drops++
+                    note("link down (status $status) while ${state.javaClass.simpleName}" +
+                         (inFlight?.let { ", ${it.path} #${it.id} in flight" } ?: ""))
+                    cleanup("Receiver disconnected")
+                    g.close(); if (gatt === g) gatt = null
+                    // Any unexpected drop from a live link is ridden out
+                    // (0.9.746). A deliberate reboot (install / save / fly)
+                    // gets 90 s. A plain drop - the receiver's radio hiccupped,
+                    // the phone's stack gave up - gets 30 s: long enough for
+                    // the receiver to re-advertise, short enough that a model
+                    // that was simply switched off still lands on the scanner
+                    // promptly. Before this a plain drop went STRAIGHT to the
+                    // scanner (2026-08-07 rule) - Malcolm 2026-09-17: mid-
+                    // session the app "returned to the opening screen but the
+                    // model wasn't selectable", because the receiver was still
+                    // tearing the old link down.
+                    val rebootishNow = System.currentTimeMillis() < rebootishUntil
+                    if (!userDisconnect && state is State.Ready && !rebootishNow && !appInForeground) {
+                        state = State.Idle   // background drop, nothing installing: let it go (see appInForeground)
+                    } else if (!userDisconnect && state is State.Ready) {
+                        val rebootish = rebootishNow
+                        reconnectUntil = System.currentTimeMillis() + (if (rebootish) rebootWindowMs else 30_000L)
+                        lastDropUnexpected = !rebootish
+                        state = State.Reconnecting(connName)
+                        bg.postDelayed({ tryReconnect() }, 2000)
+                    } else if (!userDisconnect && state is State.Reconnecting) {
+                        bg.postDelayed({ tryReconnect() }, 2000)
+                    } else {
+                        state = State.Idle
+                    }
+                }
+            }
+        }
+        override fun onMtuChanged(g: BluetoothGatt, m: Int, status: Int) {
+            if (g !== gatt) return
+            mtu = if (status == BluetoothGatt.GATT_SUCCESS) m else 23
+            note("MTU $mtu (status $status)")
+            // Now that the MTU exchange is done, ask for the fast interval
+            // (sequenced, so it isn't dropped). Then discover services.
+            g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+            g.discoverServices()
+        }
+        override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (g !== gatt) return
+            val svc = g.getService(SERVICE) ?: run {
+                run { state = State.Failed("JetCat Logger service not found") }; return
+            }
+            reqChr = svc.getCharacteristic(REQ)
+            respChr = svc.getCharacteristic(RESP)
+            val rc = respChr
+            if (reqChr == null || rc == null) {
+                run { state = State.Failed("Characteristics missing") }; return
+            }
+            g.setCharacteristicNotification(rc, true)
+            val d = rc.getDescriptor(CCCD)
+            if (Build.VERSION.SDK_INT >= 33) {
+                g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            } else {
+                @Suppress("DEPRECATION")
+                run { d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; g.writeDescriptor(d) }
+            }
+        }
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic,
+                                           status: Int) {
+            if (g !== gatt) return
+            if (c.uuid == REQ) bg.post { writeNextChunk(g, c) }
+        }
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (g !== gatt) return
+            bg.post {
+                cancelConnectWatchdog()
+                note("ready: $connName (notifications on, status $status)")
+                state = State.Ready(connName)
+                pump()
+            }
+        }
+        override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic,
+                                             value: ByteArray) {
+            if (g !== gatt) return
+            if (c.uuid == RESP) bg.post { handleNotify(value) }
+        }
+        @Deprecated("pre-33")
+        override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            if (g !== gatt) return
+            @Suppress("DEPRECATION")
+            val v = c.value ?: return
+            if (c.uuid == RESP) bg.post { handleNotify(v) }
+        }
+    }
+}
+
+// (ByteArrayOut, the small growable byte buffer, moved to ReplyFramer.kt in 5.204.)

@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>JetCat Logger</title>
+<!-- JetCat ECU Logger web pages. Served by the logger over WiFi, and over Bluetooth
+     through the HTTP-over-BLE bridge adapted from Malcolm Messiter's LDRC RXV2.
+     Self-contained: no internet needed at the field. GPL-3.0-or-later. -->
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --ink:#1b1f24; --ink2:#5b6470; --line:#dfe3e8; --accent:#0b6bcb;
+  --good:#1a7f37; --warn:#b26b00; --bad:#c62828; --band:rgba(11,107,203,.10);
+  --rpm:#0b6bcb; --egt:#d1495b; --pump:#2a9d8f; --batt:#7b5ea7; --set:#9aa5b1;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1216; --card:#181c22; --ink:#e7eaee; --ink2:#9aa4b0; --line:#2a3038; --accent:#4ea1ff;
+  --good:#3fb950; --warn:#e3a008; --bad:#ff6b6b; --band:rgba(78,161,255,.12);
+  --rpm:#4ea1ff; --egt:#ff7b8a; --pump:#4fd1c5; --batt:#b39ddb; --set:#6b7682;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px}
+header h1{font-size:17px;margin:0;font-weight:650}
+#status{font-size:12.5px;color:var(--ink2);margin-top:2px}
+#progress{height:3px;background:var(--line);margin-top:8px;border-radius:2px;overflow:hidden;display:none}
+#progress div{height:100%;width:0;background:var(--accent);transition:width .4s}
+main{max-width:760px;margin:0 auto;padding:12px 16px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;border:0;background:none;color:var(--ink2);padding:10px 0 12px;font:inherit;font-size:13px}
+nav button.on{color:var(--accent);font-weight:650}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 12px}
+.card h2{font-size:16px;margin:0 0 2px}
+.sub{color:var(--ink2);font-size:13px}
+.row{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 16px;margin-top:10px}
+.kv .k{font-size:12px;color:var(--ink2)} .kv .v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--ink2);margin:2px 4px 0 0}
+.pill.bad{color:var(--bad);border-color:var(--bad)} .pill.warn{color:var(--warn);border-color:var(--warn)} .pill.good{color:var(--good);border-color:var(--good)}
+.list .item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);cursor:pointer}
+.list .item:first-child{border-top:0}
+button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 12px;font:inherit}
+button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+label{display:block;font-size:13px;color:var(--ink2);margin:8px 0 4px}
+.chart{margin:4px 0 10px}
+.chart .t{font-size:13px;font-weight:600;margin:6px 0 2px;display:flex;justify-content:space-between}
+.chart .t span{font-weight:400;color:var(--ink2);font-variant-numeric:tabular-nums}
+canvas{width:100%;height:150px;display:block;touch-action:pan-y}
+.empty{color:var(--ink2);text-align:center;padding:24px 8px}
+.back{border:0;background:none;color:var(--accent);font:inherit;padding:4px 0 10px}
+.note{font-size:12.5px;color:var(--ink2);margin-top:8px}
+#con{font:12px/1.35 ui-monospace,Consolas,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;
+  padding:8px;margin:10px 0;height:58vh;overflow:auto;white-space:pre-wrap;word-break:break-all}
+</style>
+</head>
+<body>
+<header>
+  <h1>JetCat Logger</h1>
+  <div id="status">Connecting…</div>
+  <div id="progress"><div></div></div>
+</header>
+<main id="view"></main>
+<nav>
+  <button data-tab="fleet" class="on">Fleet</button>
+  <button data-tab="flights">Flights</button>
+  <button data-tab="trends">Trends</button>
+  <button data-tab="settings">Settings</button>
+  <button data-tab="console">Console</button>
+</nav>
+<script>
+"use strict";
+// ---------------------------------------------------------------- data from JetCat's document
+// "Serial interface of the JetCat ECU" v1.13, 26 Sep 2006, Tables 3 and 4.
+const STATES={0:"Off",1:"Wait for RPM",2:"Ignite",3:"Accelerate",4:"Stabilise",5:"Learn HI",6:"Learn LO",
+  8:"Slow down / cooldown",10:"Auto off",11:"Run",12:"Acceleration delay",13:"Speed control",14:"Two-shaft regulate",
+  15:"PreHeat 1",16:"PreHeat 2",17:"Main fuel start",19:"Kerosene full on"};
+const OFFS={0:"None",1:"Shut down via RC",2:"Overtemperature",3:"Ignition timeout",4:"Acceleration timeout",
+  5:"Acceleration too slow",6:"Over RPM",7:"Low RPM off",8:"Low battery",9:"Auto off",10:"Low temperature off",
+  11:"High temperature off",12:"Glow plug defective",13:"Watchdog timer",14:"Failsafe off",15:"Manual off (GSU)",
+  16:"Power fail",17:"Temp sensor fail",18:"Fuel fail",19:"Prop fail",20:"2nd engine fail",
+  21:"2nd engine differential too high",22:"2nd engine no communication"};
+// Trend metrics: key in last_run, label, unit, decimals. "Higher is worse" decides the warning colour only.
+const METRICS=[
+  ["mean_flight_pump_v","Pump voltage in flight","V",3],
+  ["start_s","Start time, ignition to run","s",0],
+  ["peak_start_egt_c","Peak EGT during start","°C",0],
+  ["mean_flight_egt_c","Mean EGT in flight","°C",1],
+  ["max_egt_c","Max EGT in flight","°C",0],
+  ["mean_flight_rpm","Mean RPM in flight","rpm",0],
+  ["min_flight_rpm","Lowest RPM in flight","rpm",0],
+  ["min_start_batt_v","Lowest battery during start","V",2],
+];
+const TREND_WINDOW=10, TREND_MIN=5;   // rolling mean ± 2σ of the previous 10 flights, from 5 flights
+
+// ---------------------------------------------------------------- state
+let flights=[], helis={}, status=null, tab="fleet", detailKey=null, trendSerial=null;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path,opts){
+  const r=await fetch(path,Object.assign({cache:"no-store"},opts||{}));
+  const ct=r.headers.get("content-type")||"";
+  const body=ct.includes("json")?await r.json():await r.text();
+  if(!r.ok) throw new Error((body&&body.error)||body||r.status);
+  return body;
+}
+const post=(path,params)=>api(path+(params?"?"+new URLSearchParams(params):""),{method:"POST"});
+
+// How the page is reaching the data: the logger over WiFi or Bluetooth, or (in the phone
+// app, with the logger switched off) the copies of the flights kept on the phone.
+const IN_APP=!!window.AndroidApp;
+function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this phone":"WiFi";}
+function heliName(serial){return helis[serial]||("ECU "+serial);}
+function flightTime(f){
+  const lr=f.last_run||{};
+  if(lr.ignition_at) return {date:new Date(lr.ignition_at),exact:true};
+  if(f.downloaded_at) return {date:new Date(f.downloaded_at),exact:false};
+  return null;
+}
+function fmtDate(d){return d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})+" "+
+  d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});}
+function whenText(f){
+  const t=flightTime(f);
+  if(!t) return "time unknown";
+  return t.exact?fmtDate(t.date):"before "+fmtDate(t.date);
+}
+function tfmt(v){return v<0?"−"+mmss(-v):mmss(v);}
+function nearest(xs,v){let b=0;for(let i=1;i<xs.length;i++)if(Math.abs(xs[i]-v)<Math.abs(xs[b]-v))b=i;return b;}
+function mmss(s){if(s==null||s<0)return "–";s=Math.round(s);return Math.floor(s/60)+":"+String(s%60).padStart(2,"0");}
+function hours(s){return s==null?"–":(s/3600).toFixed(1)+" h";}
+function runSecs(f){const lr=f.last_run||{};return (lr.ignition_t>=0&&lr.shutdown_t>=0)?lr.shutdown_t-lr.ignition_t:f.last_run_time_s;}
+
+// Flights grouped per ECU serial (= per heli), oldest first by runs_ok.
+function bySerial(){
+  const g={};
+  for(const f of flights)(g[f.serial]=g[f.serial]||[]).push(f);
+  for(const k in g) g[k].sort((a,b)=>a.runs_ok-b.runs_ok);
+  return g;
+}
+function missedFlights(list){let n=0;for(let i=1;i<list.length;i++){const d=list[i].runs_ok-list[i-1].runs_ok;if(d>1)n+=d-1;}return n;}
+
+// Trend flags: value outside mean ± 2σ of the previous TREND_WINDOW flights.
+function trendSeries(list,key){
+  const pts=list.map(f=>({f,v:(f.last_run||{})[key]})).filter(p=>p.v!=null&&p.v>=0);
+  for(let i=0;i<pts.length;i++){
+    const prev=pts.slice(Math.max(0,i-TREND_WINDOW),i).map(p=>p.v);
+    if(prev.length>=TREND_MIN){
+      const m=prev.reduce((a,b)=>a+b,0)/prev.length;
+      const sd=Math.sqrt(prev.reduce((a,b)=>a+(b-m)*(b-m),0)/(prev.length-1));
+      pts[i].m=m;pts[i].lo=m-2*sd;pts[i].hi=m+2*sd;
+      pts[i].flag=pts[i].v<pts[i].lo||pts[i].v>pts[i].hi;
+    }
+  }
+  return pts;
+}
+function flagsFor(f,list){
+  const out=[];
+  for(const [k,label] of METRICS){const p=trendSeries(list,k).find(p=>p.f===f);if(p&&p.flag)out.push(label);}
+  return out;
+}
+
+// ---------------------------------------------------------------- charts (no libraries)
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+// Gridline values on round numbers: 1, 2 or 5 x a power of ten (or a step from `steps`),
+// at least `minStep` apart, so each label sits exactly on its line.
+function niceTicks(lo,hi,n,minStep,steps){
+  const raw=(hi-lo)/n;
+  let step=steps?steps.find(s=>s>=raw):null;
+  if(!step){const p=Math.pow(10,Math.floor(Math.log10(raw)));step=[1,2,5,10].map(m=>m*p).find(s=>s>=raw-1e-12);}
+  if(minStep&&step<minStep)step=minStep;
+  const out=[];for(let v=Math.ceil(lo/step-1e-9)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(9));
+  return out;
+}
+const TIME_STEPS=[1,2,5,10,15,30,60,120,300,600,900,1800,3600];
+function drawChart(canvas,opt){
+  // opt: {x:[], series:[{y:[],color,dash}], band:{lo:[],hi:[]}, marks:[{i,color}], yfmt, xfmt, points,
+  //       ystep, xstep (smallest gridline spacing), xsteps (allowed spacings, e.g. TIME_STEPS)}
+  const dpr=window.devicePixelRatio||1, W=canvas.clientWidth, H=canvas.clientHeight;
+  canvas.width=W*dpr;canvas.height=H*dpr;
+  const c=canvas.getContext("2d");c.scale(dpr,dpr);
+  const L=46,R=8,T=8,B=20,pw=W-L-R,ph=H-T-B;
+  const xs=opt.x; if(!xs.length){return;}
+  const allX=[xs,...opt.series.filter(s=>s.x).map(s=>s.x)];
+  let ymin=Infinity,ymax=-Infinity;
+  for(const s of opt.series)for(const v of s.y)if(v!=null){ymin=Math.min(ymin,v);ymax=Math.max(ymax,v);}
+  if(opt.band)for(let i=0;i<xs.length;i++){if(opt.band.lo[i]!=null){ymin=Math.min(ymin,opt.band.lo[i]);ymax=Math.max(ymax,opt.band.hi[i]);}}
+  if(!isFinite(ymin)){return;}
+  if(ymin===ymax){ymin-=1;ymax+=1;}
+  const pad=(ymax-ymin)*0.08,lo0=ymin>=0;ymin-=pad;ymax+=pad;if(lo0&&ymin<0)ymin=0;
+  // One flight (or all x equal): centre it with one unit either side.
+  let x0=Infinity,x1=-Infinity;for(const a of allX)for(const v of a){if(v<x0)x0=v;if(v>x1)x1=v;}
+  const same=x1===x0, xmin=same?x0-1:x0, xmax=same?x0+1:x1;
+  const X=v=>L+(v-xmin)/(xmax-xmin)*pw, Y=v=>T+(1-(v-ymin)/(ymax-ymin))*ph;
+  c.font="11px system-ui,sans-serif";c.fillStyle=css("--ink2");c.strokeStyle=css("--line");c.lineWidth=1;
+  for(const v of niceTicks(ymin,ymax,4,opt.ystep)){const y=Y(v);c.beginPath();c.moveTo(L,y);c.lineTo(W-R,y);c.stroke();
+    c.textAlign="right";c.fillText(opt.yfmt(v),L-6,y+4);}
+  const xt=niceTicks(xmin,xmax,4,opt.xstep,opt.xsteps);
+  xt.forEach((v,i)=>{const x=X(v);c.textAlign=x<L+12?"left":x>W-R-12?"right":"center";c.fillText(opt.xfmt(v),x,H-5);});
+  if(opt.band){c.fillStyle=css("--band");c.beginPath();let started=false;
+    for(let i=0;i<xs.length;i++)if(opt.band.lo[i]!=null){const x=X(xs[i]),y=Y(opt.band.hi[i]);started?c.lineTo(x,y):c.moveTo(x,y);started=true;}
+    for(let i=xs.length-1;i>=0;i--)if(opt.band.lo[i]!=null)c.lineTo(X(xs[i]),Y(opt.band.lo[i]));
+    if(started){c.closePath();c.fill();}}
+  for(const s of opt.series){const sx=s.x||xs;c.globalAlpha=s.alpha??1;
+    c.strokeStyle=s.color;c.lineWidth=s.width||1.6;c.setLineDash(s.dash||[]);c.beginPath();
+    let pen=false;s.y.forEach((v,i)=>{if(v==null){pen=false;return;}const x=X(sx[i]),y=Y(v);pen?c.lineTo(x,y):c.moveTo(x,y);pen=true;});
+    c.stroke();c.setLineDash([]);c.globalAlpha=1;
+    if(opt.points)s.y.forEach((v,i)=>{if(v==null)return;c.fillStyle=s.color;c.beginPath();c.arc(X(xs[i]),Y(v),3,0,7);c.fill();});}
+  for(const m of opt.marks||[]){const s=opt.series[0];c.strokeStyle=m.color;c.lineWidth=2;c.beginPath();c.arc(X(xs[m.i]),Y(s.y[m.i]),6,0,7);c.stroke();}
+}
+function chartBlock(title,id){return `<div class="chart"><div class="t">${esc(title)}<span id="${id}-v"></span></div><canvas id="${id}"></canvas></div>`;}
+// Tap/drag on a chart shows the value at that point in its title line.
+function hover(canvas,xs,fn){
+  const pick=e=>{const r=canvas.getBoundingClientRect(),px=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+    const L=46,pw=r.width-54,f=Math.min(1,Math.max(0,(px-L)/pw)),xv=xs[0]+f*(xs[xs.length-1]-xs[0]);
+    let best=0;for(let i=1;i<xs.length;i++)if(Math.abs(xs[i]-xv)<Math.abs(xs[best]-xv))best=i;
+    $("#"+canvas.id+"-v").textContent=fn(best);};
+  canvas.addEventListener("mousemove",pick);canvas.addEventListener("touchstart",pick,{passive:true});
+  canvas.addEventListener("touchmove",pick,{passive:true});
+}
+
+// ---------------------------------------------------------------- views
+function render(){
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
+  const v=$("#view");
+  if(tab==="fleet") v.innerHTML=fleetView();
+  else if(tab==="flights") v.innerHTML=detailKey?"":flightsView();
+  else if(tab==="trends") v.innerHTML=trendsView();
+  else if(tab==="console") v.innerHTML=consoleView();
+  else v.innerHTML=settingsView();
+  if(tab==="flights"&&detailKey) showFlight(detailKey);
+  if(tab==="trends") drawTrends();
+  if(tab==="console") showConsole(true);
+}
+
+function fleetView(){
+  const g=bySerial(), serials=Object.keys(g);
+  if(!serials.length) return `<div class="card empty">No flights yet.<br>Plug the logger into an ECU after a flight.</div>`;
+  return serials.map(s=>{
+    const list=g[s], last=list[list.length-1], missed=missedFlights(list), flags=flagsFor(last,list);
+    return `<div class="card" onclick="openFlight('${esc(last.key)}')" style="cursor:pointer">
+      <div class="row"><h2>${esc(heliName(s))}</h2><span class="sub">${last.turbine_type?esc(last.turbine_type)+" · ":""}ECU ${esc(s)}</span></div>
+      <div class="sub">Last flight ${esc(whenText(last))}</div>
+      <div class="grid">
+        <div class="kv"><div class="k">Last run</div><div class="v">${mmss(runSecs(last))}</div></div>
+        <div class="kv"><div class="k">Max EGT</div><div class="v">${last.last_run.max_egt_c} °C</div></div>
+        <div class="kv"><div class="k">Engine total</div><div class="v">${hours(last.total_run_time_s)}</div></div>
+        <div class="kv"><div class="k">Starts OK / failed</div><div class="v">${last.runs_ok} / ${last.starts_failed}</div></div>
+      </div>
+      <div>${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}
+        ${missed?`<span class="pill warn">${missed} flight${missed>1?"s":""} not captured</span>`:""}
+        ${helis[s]?"":`<span class="pill">Tap Settings to name this heli</span>`}
+        <span class="pill">${list.length} stored</span></div>
+    </div>`;}).join("");
+}
+
+function flightsView(){
+  if(!flights.length) return `<div class="card empty">No flights stored.</div>`;
+  const g=bySerial();
+  const all=[...flights].sort((a,b)=>{const ta=flightTime(a),tb=flightTime(b);return (tb?tb.date:0)-(ta?ta.date:0)||b.runs_ok-a.runs_ok;});
+  return `<div class="card list">`+all.map(f=>{
+    const flags=flagsFor(f,g[f.serial]), off=f.off_condition;
+    return `<div class="item" onclick="openFlight('${esc(f.key)}')">
+      <div><div><b>${esc(heliName(f.serial))}</b> · run ${f.runs_ok}</div>
+        <div class="sub">${esc(whenText(f))}</div>
+        <div>${off&&off!==1&&f.session_values_valid?`<span class="pill bad">${esc(OFFS[off]||"Off "+off)}</span>`:""}
+          ${flags.length?`<span class="pill bad">${flags.length} trend flag${flags.length>1?"s":""}</span>`:""}
+          ${f.log_status!=="full"?`<span class="pill warn">no log</span>`:""}</div></div>
+      <div style="text-align:right"><div><b>${mmss(runSecs(f))}</b></div><div class="sub">${f.last_run.max_egt_c} °C max</div></div>
+    </div>`;}).join("")+`</div>`;
+}
+
+function openFlight(key){tab="flights";detailKey=key;render();window.scrollTo(0,0);}
+function closeFlight(){detailKey=null;render();}
+
+async function showFlight(key){
+  const f=flights.find(x=>x.key===key); if(!f){detailKey=null;render();return;}
+  const lr=f.last_run, list=bySerial()[f.serial], flags=flagsFor(f,list);
+  const sess=f.session_values_valid;
+  $("#view").innerHTML=`<button class="back" onclick="closeFlight()">‹ All flights</button>
+  <div class="card">
+    <div class="row"><h2>${esc(heliName(f.serial))} · run ${f.runs_ok}</h2><span class="sub">ECU ${esc(f.serial)}</span></div>
+    <div class="sub">${esc(whenText(f))}${f.time_source==="back_calculated"?"":" · times not available for this download"}</div>
+    <div>${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}</div>
+    <div class="grid">
+      <div class="kv"><div class="k">Run time</div><div class="v">${mmss(runSecs(f))}</div></div>
+      <div class="kv"><div class="k">Start, ignition to run</div><div class="v">${lr.start_s>=0?lr.start_s+" s":"–"}</div></div>
+      <div class="kv"><div class="k">Peak EGT, start</div><div class="v">${lr.peak_start_egt_c} °C</div></div>
+      <div class="kv"><div class="k">Max EGT, flight</div><div class="v">${lr.max_egt_c} °C</div></div>
+      <div class="kv"><div class="k">Mean RPM, flight</div><div class="v">${Math.round(lr.mean_flight_rpm).toLocaleString()}</div></div>
+      <div class="kv"><div class="k">Lowest RPM, flight</div><div class="v">${lr.min_flight_rpm.toLocaleString()}</div></div>
+      <div class="kv"><div class="k">Mean pump, flight</div><div class="v">${lr.mean_flight_pump_v.toFixed(3)} V</div></div>
+      <div class="kv"><div class="k">Lowest battery, start</div><div class="v">${lr.min_start_batt_v.toFixed(2)} V</div></div>
+      <div class="kv"><div class="k">Shutdown</div><div class="v" style="font-size:14px">${sess?esc(OFFS[f.off_condition]||f.off_condition):"–"}</div></div>
+      <div class="kv"><div class="k">Failsafes</div><div class="v">${sess?f.failsafe_count+(f.failsafe_count?" ("+f.failsafe_time_s+" s)":""):"–"}</div></div>
+      <div class="kv"><div class="k">Engine total</div><div class="v">${hours(f.total_run_time_s)}</div></div>
+      <div class="kv"><div class="k">Starts OK / failed</div><div class="v">${f.runs_ok} / ${f.starts_failed}</div></div>
+    </div>
+    ${sess?"":`<div class="note">Shutdown reason and failsafes are only shown when the logger is plugged in before the ECU is switched off, because the ECU resets them at power-up.</div>`}
+  </div>
+  <div class="card" id="charts"><div class="sub">Loading log…</div></div>
+  <div class="card"><div class="btns">
+    <button class="btn" onclick="exportFlight('${esc(key)}')">Export log (CSV)</button>
+    <button class="btn danger" onclick="deleteFlight('${esc(key)}')">Delete</button></div></div>`;
+  flightCharts($("#charts"),f,"c");
+}
+
+// ---------------------------------------------------------------- in-flight charts
+// RPM, EGT, pump and battery against time for one flight, with the previous flight of the
+// same heli as a faint dashed line. Both are lined up on ignition (time 0), so the start
+// and the flight can be compared directly; time before ignition is shown as negative.
+const csvCache={};
+async function flightLog(f){
+  if(!csvCache[f.key]) csvCache[f.key]=await api("/api/flight.csv?key="+encodeURIComponent(f.key));
+  const rows=csvCache[f.key].trim().split("\n").slice(1).map(l=>l.split(","));
+  const t=rows.map(r=>+r[0]), t0=(f.last_run&&f.last_run.ignition_t>=0)?f.last_run.ignition_t:t[0];
+  return {x:t.map(v=>v-t0),rpm:rows.map(r=>+r[1]),set:rows.map(r=>+r[2]),egt:rows.map(r=>+r[3]),
+          pump:rows.map(r=>+r[4]),st:rows.map(r=>+r[5]),batt:rows.map(r=>+r[8]),fromIgn:!!(f.last_run&&f.last_run.ignition_t>=0)};
+}
+function previousFlight(f){
+  const list=bySerial()[f.serial]||[], i=list.findIndex(x=>x.key===f.key);
+  for(let k=i-1;k>=0;k--) if(list[k].log_status==="full") return list[k];
+  return null;
+}
+async function flightCharts(el,f,p){
+  if(f.log_status!=="full"){el.innerHTML=`<div class="sub">No log was downloaded for this flight.</div>`;return;}
+  try{
+    const a=await flightLog(f), pf=previousFlight(f);
+    let b=null; if(pf){try{b=await flightLog(pf);}catch(e){}}
+    el.innerHTML=chartBlock("RPM and set RPM",p+"-rpm")+chartBlock("EGT",p+"-egt")+chartBlock("Pump voltage",p+"-pump")+chartBlock("Battery",p+"-batt")+
+      `<div class="note">Time from ignition${a.fromIgn?"":" (from the start of the log: no start was found)"}.
+       ${b?`Faint dashed line: previous flight, run ${pf.runs_ok}.`:"No earlier flight of this heli to compare with yet."}
+       Tap or drag on a chart to read values.</div>`;
+    const k=v=>Math.round(v/1000)+"k", tx={xfmt:tfmt,xstep:1,xsteps:TIME_STEPS};
+    const prev=(key,color)=>b?[{x:b.x,y:b[key],color,dash:[3,3],width:1.2,alpha:.45}]:[];
+    drawChart($("#"+p+"-rpm"),{x:a.x,series:[...prev("rpm",css("--rpm")),{y:a.set,color:css("--set"),dash:[4,3],width:1.2},{y:a.rpm,color:css("--rpm")}],yfmt:k,ystep:1000,...tx});
+    drawChart($("#"+p+"-egt"),{x:a.x,series:[...prev("egt",css("--egt")),{y:a.egt,color:css("--egt")}],yfmt:v=>Math.round(v),ystep:1,...tx});
+    drawChart($("#"+p+"-pump"),{x:a.x,series:[...prev("pump",css("--pump")),{y:a.pump,color:css("--pump")}],yfmt:v=>v.toFixed(2),ystep:0.01,...tx});
+    drawChart($("#"+p+"-batt"),{x:a.x,series:[...prev("batt",css("--batt")),{y:a.batt,color:css("--batt")}],yfmt:v=>v.toFixed(2),ystep:0.01,...tx});
+    const lab=i=>`${tfmt(a.x[i])} · ${STATES[a.st[i]]||"state "+a.st[i]}`;
+    const pv=(i,key,fmt)=>{if(!b)return "";const j=nearest(b.x,a.x[i]);return Math.abs(b.x[j]-a.x[i])<=2?` · prev ${fmt(b[key][j])}`:"";};
+    hover($("#"+p+"-rpm"),a.x,i=>`${lab(i)} · ${a.rpm[i].toLocaleString()} (set ${a.set[i].toLocaleString()})${pv(i,"rpm",v=>v.toLocaleString())}`);
+    hover($("#"+p+"-egt"),a.x,i=>`${lab(i)} · ${a.egt[i]} °C${pv(i,"egt",v=>v+" °C")}`);
+    hover($("#"+p+"-pump"),a.x,i=>`${lab(i)} · ${a.pump[i].toFixed(2)} V${pv(i,"pump",v=>v.toFixed(2)+" V")}`);
+    hover($("#"+p+"-batt"),a.x,i=>`${lab(i)} · ${a.batt[i].toFixed(2)} V${pv(i,"batt",v=>v.toFixed(2)+" V")}`);
+  }catch(e){el.innerHTML=`<div class="sub">Could not load the log: ${esc(e.message)}</div>`;}
+}
+
+function trendsView(){
+  const g=bySerial(), serials=Object.keys(g);
+  if(!serials.length) return `<div class="card empty">No flights yet.</div>`;
+  if(!trendSerial||!g[trendSerial]) trendSerial=serials[0];
+  const list=g[trendSerial];
+  const pick=`<div class="card"><label for="ts">Heli</label>
+    <select id="ts" onchange="trendSerial=this.value;render()">${serials.map(s=>`<option value="${esc(s)}"${s===trendSerial?" selected":""}>${esc(heliName(s))}</option>`).join("")}</select>`;
+  if(list.length<2) return pick+`
+    <div class="note">Flight-to-flight trends start with this heli's second flight. Until then, here is its one flight.</div>
+    <div class="btns"><button class="btn" onclick="openFlight('${esc(list[0].key)}')">Open flight details</button></div></div>
+    <div class="card" id="tf-charts"><div class="sub">Loading log…</div></div>`;
+  return `<div class="card"><label for="ts">Heli</label>
+    <select id="ts" onchange="trendSerial=this.value;render()">${serials.map(s=>`<option value="${esc(s)}"${s===trendSerial?" selected":""}>${esc(heliName(s))}</option>`).join("")}</select>
+    <div class="note">${list.length} flight${list.length>1?"s":""} stored. The shaded band is the mean ± 2σ of the previous ${TREND_WINDOW} flights; circled points fall outside it.
+    ${list.length<TREND_MIN+1?` Flags start once ${TREND_MIN+1} flights are stored.`:""}</div></div>
+    <div class="card">${METRICS.map(([key,label])=>chartBlock(label,"t-"+key)).join("")}
+    <div class="note">X axis: the ECU's run count, so gaps show flights that were not downloaded. Tap a point to open that flight.</div></div>`;
+}
+function drawTrends(){
+  const list=(bySerial()[trendSerial])||[];
+  if(list.length===1){const el=$("#tf-charts");if(el)flightCharts(el,list[0],"tf");return;}
+  for(const [key,label,unit,dp] of METRICS){
+    const pts=trendSeries(list,key), cv=$("#t-"+key); if(!cv||!pts.length) continue;
+    const x=pts.map(p=>p.f.runs_ok);
+    drawChart(cv,{x,points:true,series:[{y:pts.map(p=>p.v),color:css("--accent")}],
+      band:{lo:pts.map(p=>p.lo??null),hi:pts.map(p=>p.hi??null)},
+      marks:pts.map((p,i)=>p.flag?{i,color:css("--bad")}:null).filter(Boolean),
+      yfmt:v=>v.toFixed(dp),ystep:Math.pow(10,-dp),xfmt:v=>Math.round(v),xstep:1});
+    cv.style.cursor="pointer";
+    cv.onclick=e=>{const r=cv.getBoundingClientRect(),L=46,pw=r.width-54,lo=x[0]===x[x.length-1]?x[0]-1:x[0],hi=x[0]===x[x.length-1]?x[0]+1:x[x.length-1];
+      openFlight(pts[nearest(x,lo+Math.min(1,Math.max(0,(e.clientX-r.left-L)/pw))*(hi-lo))].f.key);};
+    hover(cv,x,i=>`run ${pts[i].f.runs_ok} · ${pts[i].v.toFixed(dp)} ${unit}${pts[i].flag?" · outside usual range":""}`);
+  }
+}
+
+function settingsView(){
+  const s=status||{}, serials=Object.keys(bySerial());
+  const allSerials=[...new Set([...serials,...Object.keys(helis)])];
+  return `<div class="card"><h2>Heli names</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the heli.</div>
+    ${allSerials.length?allSerials.map(sr=>`<label for="h-${esc(sr)}">ECU ${esc(sr)}</label>
+      <div class="row"><input id="h-${esc(sr)}" value="${esc(helis[sr]||"")}" placeholder="e.g. BO 105" maxlength="40">
+      <button class="btn" onclick="saveHeli('${esc(sr)}')">Save</button></div>`).join(""):`<div class="note">Names can be added once a flight has been downloaded.</div>`}
+  </div>
+  ${appCard()}
+  ${s.via==="phone"?`<div class="card"><h2>Logger</h2><div class="sub">Not connected. These pages are showing the ${s.flights} flight${s.flights===1?"":"s"} kept on this phone.
+    Plug the logger into an ECU, or press its button, and connect from the app's home screen.</div>
+    <div class="btns"><button class="btn" onclick="exportSummary()">Export all flights (CSV)</button></div></div>`:`<div class="card"><h2>Logger</h2>
+    <div class="grid">
+      <div class="kv"><div class="k">Firmware</div><div class="v" style="font-size:14px">${esc(s.fw)} (${esc(s.running_partition)}, ${esc(s.ota_state)})</div></div>
+      <div class="kv"><div class="k">Clock</div><div class="v" style="font-size:14px">${s.clock?esc(fmtDate(new Date(s.clock))):"not set"}${s.rtc?" · RTC":""}</div></div>
+      <div class="kv"><div class="k">Stored</div><div class="v" style="font-size:14px">${s.flights} flights · ${s.flash_used_kb} / ${s.flash_total_kb} KB</div></div>
+      <div class="kv"><div class="k">Connected by</div><div class="v" style="font-size:14px">${viaText(s.via)}</div></div>
+    </div>
+    <div class="note">Last download: ${esc(s.last)}</div>
+    <div class="btns"><button class="btn primary" onclick="downloadNow()">Download from ECU now</button>
+      <button class="btn" onclick="exportSummary()">Export all flights (CSV)</button></div>
+  </div>
+  <div class="card"><h2>Home WiFi</h2><div class="sub">For viewing in a browser at home and for firmware updates from PlatformIO.
+    ${s.wifi&&s.wifi.connected?`Connected to ${esc(s.wifi.ssid)}, <b>http://${esc(s.wifi.ip)}</b>`:s.wifi&&s.wifi.ssid?`Saved: ${esc(s.wifi.ssid)} (not connected)`:"Not set."}</div>
+    <label for="ws">Network name</label><input id="ws" value="${esc((s.wifi&&s.wifi.ssid)||"")}" autocomplete="off">
+    <label for="wp">Password</label><input id="wp" type="password" autocomplete="off">
+    <div class="btns"><button class="btn" onclick="saveWifi()">Save</button>
+    ${s.via!=="ble"?`<button class="btn" onclick="location.href='/ota'">Firmware update…</button>`:""}</div>
+  </div>`}`;
+}
+// In the phone app: where the flights are copied to (OneDrive), from the app itself.
+function appCard(){
+  if(!IN_APP)return "";
+  let o={};try{o=JSON.parse(AndroidApp.oneDriveStatus());}catch(e){}
+  return `<div class="card"><h2>Phone app</h2><div class="sub">${esc(o.flights)} flight${o.flights===1?"":"s"} kept on this phone.
+    ${o.configured?(o.signedIn?`OneDrive: signed in${o.account?" as "+esc(o.account):""}. ${o.pending?esc(o.pending)+" file(s) waiting to upload.":"Everything uploaded."}${o.lastUpload?" Last upload "+esc(o.lastUpload)+".":""}${o.error?"<br>Last problem: "+esc(o.error):""}`
+      :"OneDrive: not signed in. Flights are kept on the phone; sign in to copy them to OneDrive."):"OneDrive upload is not set up in this build of the app."}</div>
+    <div class="btns">${o.configured?(o.signedIn?`<button class="btn" onclick="AndroidApp.oneDriveUploadNow()">Upload now</button><button class="btn" onclick="if(confirm('Sign out of OneDrive?'))AndroidApp.oneDriveSignOut()">Sign out</button>`
+      :`<button class="btn primary" onclick="AndroidApp.oneDriveSignIn()">Sign in to OneDrive</button>`):""}
+      <button class="btn" onclick="AndroidApp.home()">Loggers…</button></div></div>`;
+}
+
+// ---------------------------------------------------------------- console
+// Same commands as the USB serial monitor (type help). Output is fetched in pieces from
+// /api/console?since=N, where N counts every byte the logger has printed since boot.
+let conText="", conNext=0, conBusy=false;
+function consoleView(){
+  return `<div class="card"><h2>Console</h2>
+    <div class="sub">Live output from the logger. Commands work as on the USB serial monitor; type <b>help</b> for the list.</div>
+    <pre id="con"></pre>
+    <div class="row"><input id="cmd" placeholder="command, e.g. status" maxlength="120" autocomplete="off"
+      autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')sendCmd()">
+      <button class="btn primary" onclick="sendCmd()">Send</button></div></div>`;
+}
+function showConsole(jump){
+  const pre=$("#con"); if(!pre)return;
+  const atEnd=jump||pre.scrollTop+pre.clientHeight>=pre.scrollHeight-20;
+  pre.textContent=conText;
+  if(atEnd)pre.scrollTop=pre.scrollHeight;
+}
+async function pollConsole(){
+  if(conBusy)return; conBusy=true;
+  try{
+    for(let i=0;i<20;i++){
+      const r=await api("/api/console?since="+conNext);
+      if(r.first>conNext&&conNext>0)conText+="… (older output no longer held)\n";
+      conText+=r.text; conNext=r.next;
+      if(conText.length>300000)conText=conText.slice(-200000);
+      if(r.next>=r.total)break;
+    }
+    showConsole(false);
+  }catch(e){}finally{conBusy=false;}
+}
+async function sendCmd(){
+  const i=$("#cmd"), c=i.value.trim(); if(!c)return;
+  try{await post("/api/console",{cmd:c});i.value="";setTimeout(pollConsole,300);}
+  catch(e){toast("Not sent: "+e.message);}
+}
+
+// ---------------------------------------------------------------- actions
+async function saveHeli(serial){
+  try{helis=await post("/api/heli",{serial,name:$("#h-"+serial).value.trim()});toast("Saved");}
+  catch(e){toast("Could not save: "+e.message);}
+}
+async function saveWifi(){
+  try{await post("/api/wifi",{ssid:$("#ws").value.trim(),pass:$("#wp").value});toast("Saved - joining WiFi");}
+  catch(e){toast("Could not save: "+e.message);}
+}
+async function downloadNow(){try{await post("/api/download");toast("Downloading…");}catch(e){toast(e.message);}}
+async function deleteFlight(key){
+  if(!confirm("Delete this flight from the logger? Export it first if you want to keep it."))return;
+  try{await post("/api/delete",{key});detailKey=null;await loadFlights();toast("Deleted");}catch(e){toast(e.message);}
+}
+function saveFile(name,text){
+  if(IN_APP){AndroidApp.saveFile(name,text);return;}   // WebView cannot download a blob: the app shares it
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type:"text/csv"}));
+  a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);
+}
+async function exportFlight(key){
+  try{saveFile(key+".csv",await api("/api/flight.csv?key="+encodeURIComponent(key)));}catch(e){toast(e.message);}
+}
+function exportSummary(){
+  const cols=["key","serial","heli","runs_ok","starts_failed","when","time_source","run_s","start_s","peak_start_egt_c",
+    "max_egt_c","mean_flight_egt_c","mean_flight_rpm","min_flight_rpm","mean_flight_pump_v","max_pump_v","min_start_batt_v",
+    "off_condition","failsafe_count","failsafe_time_s","total_run_time_h","ambient_c","log_status"];
+  const q=v=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const lines=[cols.join(",")];
+  for(const f of [...flights].sort((a,b)=>a.serial.localeCompare(b.serial)||a.runs_ok-b.runs_ok)){
+    const lr=f.last_run||{}, t=flightTime(f);
+    lines.push([f.key,f.serial,heliName(f.serial),f.runs_ok,f.starts_failed,t?t.date.toISOString():"",f.time_source,runSecs(f),
+      lr.start_s,lr.peak_start_egt_c,lr.max_egt_c,lr.mean_flight_egt_c,lr.mean_flight_rpm,lr.min_flight_rpm,lr.mean_flight_pump_v,
+      lr.max_pump_v,lr.min_start_batt_v,f.session_values_valid?(OFFS[f.off_condition]||f.off_condition):"",
+      f.session_values_valid?f.failsafe_count:"",f.session_values_valid?f.failsafe_time_s:"",
+      (f.total_run_time_s/3600).toFixed(2),f.ambient_c,f.log_status].map(q).join(","));
+  }
+  saveFile("jetcat-flights.csv",lines.join("\r\n"));
+}
+let toastT;
+function toast(msg){let t=$("#toast");if(!t){t=document.createElement("div");t.id="toast";
+  t.style.cssText="position:fixed;left:50%;bottom:76px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:14px;z-index:9;max-width:90%";
+  document.body.appendChild(t);}t.textContent=msg;t.style.display="block";clearTimeout(toastT);toastT=setTimeout(()=>t.style.display="none",2500);}
+
+// ---------------------------------------------------------------- loading + status polling
+async function loadFlights(){
+  [flights,helis]=await Promise.all([api("/api/flights.json"),api("/api/helis.json")]);
+  render();
+}
+let wasDownloading=false;
+async function pollStatus(){
+  try{
+    status=await api("/api/status.json");
+    const p=$("#progress");
+    if(status.downloading){
+      p.style.display="block";p.firstElementChild.style.width=Math.min(100,status.dump_bytes/46200*100)+"%";
+      $("#status").textContent=status.dump_bytes?`Downloading log… ${Math.round(status.dump_bytes/1024)} KB`:"Reading ECU summary…";
+    }else{
+      p.style.display="none";
+      $("#status").textContent=status.via==="phone"?`${status.flights} flight${status.flights===1?"":"s"} on this phone · logger not connected`:
+        `${status.flights} flight${status.flights===1?"":"s"} · ${viaText(status.via)}`+
+        (status.state==="Fault"?" · last download failed":"");
+    }
+    if(wasDownloading&&!status.downloading) await loadFlights();
+    wasDownloading=status.downloading;
+    // Refresh the settings page, but never while something is being typed into it.
+    if(tab==="settings"&&![...document.querySelectorAll("#view input")].some(i=>i===document.activeElement||i.value!==i.defaultValue))render();
+  }catch(e){$("#status").textContent="Not connected to the logger";}
+}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{tab=b.dataset.tab;if(tab!=="flights")detailKey=null;render();
+  if(tab==="console")pollConsole();});
+window.addEventListener("resize",()=>{if(tab==="trends")drawTrends();else if(detailKey)showFlight(detailKey);});
+(async()=>{
+  // The phone sets the logger's clock at every connection.
+  try{await post("/api/time",{epoch:Math.floor(Date.now()/1000)});}catch(e){}
+  await pollStatus();
+  try{await loadFlights();}catch(e){$("#view").innerHTML=`<div class="card empty">Could not reach the logger.<br>${esc(e.message)}</div>`;}
+  setInterval(pollStatus,3000);
+  setInterval(()=>{if(tab==="console")pollConsole();},1500);
+})();
+</script>
+</body>
+</html>
