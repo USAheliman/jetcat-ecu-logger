@@ -119,6 +119,14 @@ const post=(path,params)=>api(path+(params?"?"+new URLSearchParams(params):""),{
 // How the page is reaching the data: the logger over WiFi or Bluetooth, or (in the phone
 // app, with the logger switched off) the copies of the flights kept on the phone.
 const IN_APP=!!window.AndroidApp;
+// Logger battery (battery build only). The % is a rough guide from a typical 1S LiPo
+// resting-voltage curve, not a measurement of charge.
+const LIPO_CURVE=[[3300,0],[3500,5],[3600,12],[3700,30],[3800,50],[3900,65],[4000,78],[4100,90],[4200,100]];
+function battPct(mv){if(mv>=4200)return 100;if(mv<=3300)return 0;
+  for(let i=1;i<LIPO_CURVE.length;i++){const [v1,p1]=LIPO_CURVE[i],[v0,p0]=LIPO_CURVE[i-1];
+    if(mv<=v1)return Math.round(p0+(p1-p0)*(mv-v0)/(v1-v0));}return 100;}
+function battText(s){const p=s&&s.power;if(!p||!(p.battery_mv>0))return "";
+  return `battery ${(p.battery_mv/1000).toFixed(2)} V (~${battPct(p.battery_mv)}%)${p.low?" LOW":""}`;}
 function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this phone":"WiFi";}
 function heliName(serial){return helis[serial]||("ECU "+serial);}
 function flightTime(f){
@@ -433,6 +441,7 @@ function settingsView(){
       <div class="kv"><div class="k">Clock</div><div class="v" style="font-size:14px">${s.clock?esc(fmtDate(new Date(s.clock))):"not set"}${s.rtc?" · RTC":""}</div></div>
       <div class="kv"><div class="k">Stored</div><div class="v" style="font-size:14px">${s.flights} flights · ${s.flash_used_kb} / ${s.flash_total_kb} KB</div></div>
       <div class="kv"><div class="k">Connected by</div><div class="v" style="font-size:14px">${viaText(s.via)}</div></div>
+      ${battText(s)?`<div class="kv"><div class="k">Logger battery</div><div class="v" style="font-size:14px">${(s.power.battery_mv/1000).toFixed(2)} V · ~${battPct(s.power.battery_mv)}%${s.power.low?" · LOW":""}</div></div>`:""}
     </div>
     <div class="note">Last download: ${esc(s.last)}</div>
     <div class="btns"><button class="btn primary" onclick="downloadNow()">Download from ECU now</button>
@@ -554,7 +563,7 @@ async function pollStatus(){
     }else{
       p.style.display="none";
       $("#status").textContent=status.via==="phone"?`${status.flights} flight${status.flights===1?"":"s"} on this phone · logger not connected`:
-        `${status.flights} flight${status.flights===1?"":"s"} · ${viaText(status.via)}`+
+        `${status.flights} flight${status.flights===1?"":"s"} · ${viaText(status.via)}`+(battText(status)?" · "+battText(status):"")+
         (status.state==="Fault"?" · last download failed":"");
     }
     if(wasDownloading&&!status.downloading) await loadFlights();

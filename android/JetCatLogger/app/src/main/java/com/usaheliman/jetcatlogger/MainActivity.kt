@@ -37,6 +37,8 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -70,6 +72,13 @@ class MainActivity : AppCompatActivity() {
         ble = LoggerBle(this)
         root = FrameLayout(this)
         setContentView(root)
+        // Android 15 draws apps edge to edge (under the status and navigation bars): keep the
+        // home screen and the pages clear of them, and of any camera cut-out.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(b.left, b.top, b.right, b.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
         ble.onFound = { listAdapter?.submit(it) }
         ble.onState = { s -> onBleState(s) }
         showHome()
