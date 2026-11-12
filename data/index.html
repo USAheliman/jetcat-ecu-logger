@@ -47,7 +47,8 @@ button.btn.danger{color:var(--bad);border-color:var(--bad)}
 .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
 label{display:block;font-size:13px;color:var(--ink2);margin:8px 0 4px}
-.chart{margin:4px 0 10px}
+.chart{margin:4px 0 10px;position:relative}
+.cursor{position:absolute;width:1px;background:var(--ink);opacity:.55;pointer-events:none;display:none}
 .chart .t{font-size:13px;font-weight:600;margin:6px 0 2px;display:flex;justify-content:space-between}
 .chart .t span{font-weight:400;color:var(--ink2);font-variant-numeric:tabular-nums}
 canvas{width:100%;height:150px;display:block;touch-action:pan-y}
@@ -216,8 +217,30 @@ function drawChart(canvas,opt){
     c.stroke();c.setLineDash([]);c.globalAlpha=1;
     if(opt.points)s.y.forEach((v,i)=>{if(v==null)return;c.fillStyle=s.color;c.beginPath();c.arc(X(xs[i]),Y(v),3,0,7);c.fill();});}
   for(const m of opt.marks||[]){const s=opt.series[0];c.strokeStyle=m.color;c.lineWidth=2;c.beginPath();c.arc(X(xs[m.i]),Y(s.y[m.i]),6,0,7);c.stroke();}
+  canvas._map={xmin,xmax,L,pw,T,ph};   // for the tap/drag cursor
 }
 function chartBlock(title,id){return `<div class="chart"><div class="t">${esc(title)}<span id="${id}-v"></span></div><canvas id="${id}"></canvas></div>`;}
+// Linked cursor: tap or drag on any chart in the group and a vertical line appears at that
+// moment on every chart, each showing its own value in its title line.
+function linkedHover(xs,items){   // items: [{canvas, fn(i) -> text}]
+  items=items.filter(it=>it.canvas&&it.canvas._map);
+  for(const it of items){
+    const ch=it.canvas.parentElement;let ln=ch.querySelector(".cursor");
+    if(!ln){ln=document.createElement("div");ln.className="cursor";ch.appendChild(ln);}
+    it.line=ln;
+  }
+  const show=i=>{for(const it of items){const m=it.canvas._map,X=m.L+(xs[i]-m.xmin)/(m.xmax-m.xmin)*m.pw;
+    it.line.style.left=(it.canvas.offsetLeft+X)+"px";it.line.style.top=(it.canvas.offsetTop+m.T)+"px";
+    it.line.style.height=m.ph+"px";it.line.style.display="block";
+    $("#"+it.canvas.id+"-v").textContent=it.fn(i);}};
+  for(const it of items){
+    const cv=it.canvas;
+    const pick=e=>{const r=cv.getBoundingClientRect(),m=cv._map,px=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+      const f=Math.min(1,Math.max(0,(px-m.L)/m.pw));show(nearest(xs,m.xmin+f*(m.xmax-m.xmin)));};
+    cv.addEventListener("mousemove",pick);cv.addEventListener("touchstart",pick,{passive:true});
+    cv.addEventListener("touchmove",pick,{passive:true});
+  }
+}
 // Tap/drag on a chart shows the value at that point in its title line.
 function hover(canvas,xs,fn){
   const pick=e=>{const r=canvas.getBoundingClientRect(),px=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
@@ -339,7 +362,7 @@ async function flightCharts(el,f,p){
     el.innerHTML=chartBlock("RPM and set RPM",p+"-rpm")+chartBlock("EGT",p+"-egt")+chartBlock("Pump voltage",p+"-pump")+chartBlock("Battery",p+"-batt")+
       `<div class="note">Time from ignition${a.fromIgn?"":" (from the start of the log: no start was found)"}.
        ${b?`Faint dashed line: previous flight, run ${pf.runs_ok}.`:"No earlier flight of this heli to compare with yet."}
-       Tap or drag on a chart to read values.</div>`;
+       Tap or drag on any chart: the line shows the same moment on all four.</div>`;
     const k=v=>Math.round(v/1000)+"k", tx={xfmt:tfmt,xstep:1,xsteps:TIME_STEPS};
     const prev=(key,color)=>b?[{x:b.x,y:b[key],color,dash:[3,3],width:1.2,alpha:.45}]:[];
     drawChart($("#"+p+"-rpm"),{x:a.x,series:[...prev("rpm",css("--rpm")),{y:a.set,color:css("--set"),dash:[4,3],width:1.2},{y:a.rpm,color:css("--rpm")}],yfmt:k,ystep:1000,...tx});
@@ -348,10 +371,12 @@ async function flightCharts(el,f,p){
     drawChart($("#"+p+"-batt"),{x:a.x,series:[...prev("batt",css("--batt")),{y:a.batt,color:css("--batt")}],yfmt:v=>v.toFixed(2),ystep:0.01,...tx});
     const lab=i=>`${tfmt(a.x[i])} · ${STATES[a.st[i]]||"state "+a.st[i]}`;
     const pv=(i,key,fmt)=>{if(!b)return "";const j=nearest(b.x,a.x[i]);return Math.abs(b.x[j]-a.x[i])<=2?` · prev ${fmt(b[key][j])}`:"";};
-    hover($("#"+p+"-rpm"),a.x,i=>`${lab(i)} · ${a.rpm[i].toLocaleString()} (set ${a.set[i].toLocaleString()})${pv(i,"rpm",v=>v.toLocaleString())}`);
-    hover($("#"+p+"-egt"),a.x,i=>`${lab(i)} · ${a.egt[i]} °C${pv(i,"egt",v=>v+" °C")}`);
-    hover($("#"+p+"-pump"),a.x,i=>`${lab(i)} · ${a.pump[i].toFixed(2)} V${pv(i,"pump",v=>v.toFixed(2)+" V")}`);
-    hover($("#"+p+"-batt"),a.x,i=>`${lab(i)} · ${a.batt[i].toFixed(2)} V${pv(i,"batt",v=>v.toFixed(2)+" V")}`);
+    // One cursor across all four charts; each title shows the time, the RPM one the engine state too.
+    linkedHover(a.x,[
+      {canvas:$("#"+p+"-rpm"),fn:i=>`${lab(i)} · ${a.rpm[i].toLocaleString()} (set ${a.set[i].toLocaleString()})${pv(i,"rpm",v=>v.toLocaleString())}`},
+      {canvas:$("#"+p+"-egt"),fn:i=>`${tfmt(a.x[i])} · ${a.egt[i]} °C${pv(i,"egt",v=>v+" °C")}`},
+      {canvas:$("#"+p+"-pump"),fn:i=>`${tfmt(a.x[i])} · ${a.pump[i].toFixed(2)} V${pv(i,"pump",v=>v.toFixed(2)+" V")}`},
+      {canvas:$("#"+p+"-batt"),fn:i=>`${tfmt(a.x[i])} · ${a.batt[i].toFixed(2)} V${pv(i,"batt",v=>v.toFixed(2)+" V")}`}]);
   }catch(e){el.innerHTML=`<div class="sub">Could not load the log: ${esc(e.message)}</div>`;}
 }
 
