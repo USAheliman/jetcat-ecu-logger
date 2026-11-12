@@ -46,7 +46,11 @@ void begin() {
     rtc_gpio_deinit((gpio_num_t)cfg::PIN_ECU_WAKE);
     rtc_gpio_deinit((gpio_num_t)cfg::PIN_WAKE_BUTTON);
     rtc_gpio_deinit((gpio_num_t)cfg::PIN_BOOT_BUTTON);
-    pinMode(cfg::PIN_ECU_WAKE, INPUT_PULLDOWN);
+    // No internal pull-down on the ECU wake pin: the board's 150k already holds it low when
+    // unplugged, and the chip's own pull-down (45 kOhm typical) in parallel with the 150k
+    // dragged the divider's 3.0 V down below the logic-high threshold (0.68 V measured
+    // 12 Nov 2026), so plugging in the ECU didn't wake it.
+    pinMode(cfg::PIN_ECU_WAKE, INPUT);
     pinMode(cfg::PIN_WAKE_BUTTON, INPUT_PULLUP);
     pinMode(cfg::PIN_BOOT_BUTTON, INPUT_PULLUP);
 
@@ -95,10 +99,10 @@ void sleepNow(const char* why, bool ecuWake) {
     }
     gpio_deep_sleep_hold_en();
 
-    // Wake 1: ECU +5 V through the 100k/150k divider (high). ext0 keeps the RTC IO domain
-    // powered, so the internal pull-down holds the pin low when the lead is unplugged.
+    // Wake 1: ECU +5 V through the 100k/150k divider (3.0 V, high). The 150k holds the pin
+    // low when unplugged; the internal pull-down stays OFF (see begin()).
     if (ecuWake) {
-        rtc_gpio_pulldown_en((gpio_num_t)cfg::PIN_ECU_WAKE);
+        rtc_gpio_pulldown_dis((gpio_num_t)cfg::PIN_ECU_WAKE);
         rtc_gpio_pullup_dis((gpio_num_t)cfg::PIN_ECU_WAKE);
         esp_sleep_enable_ext0_wakeup((gpio_num_t)cfg::PIN_ECU_WAKE, 1);
     } else {
