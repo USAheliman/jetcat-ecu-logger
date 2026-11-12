@@ -34,6 +34,9 @@ class FlightStore(context: Context) {
         if (!safeKey(key) || csv.isEmpty()) return
         writeAtomically(File(dir, "$key.csv"), csv)
     }
+    /** Forget the phone's copy of a flight's log, so the next sync fetches it again
+     *  (used when the logger has rebuilt that flight's summary, e.g. console "reparse"). */
+    @Synchronized fun dropCsv(key: String) { if (safeKey(key)) File(dir, "$key.csv").delete() }
     @Synchronized fun csv(key: String): ByteArray? =
         if (hasCsv(key)) File(dir, "$key.csv").readBytes() else null
     @Synchronized fun json(key: String): JSONObject? =

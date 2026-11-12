@@ -37,11 +37,13 @@ public:
     // interrupted dump, so the next command isn't mixed up with leftover log rows).
     void drain(uint32_t quietMs, uint32_t maxMs = 90000);
 
+    // Parse an "1,HS,OK,p1,p2,..." reply line (also used to rebuild stored replies).
+    static Reply parseHs(const String& line);
+
 private:
     void send(Cmd c);            // the only transmit path
     bool readLine(String& line, uint32_t deadline);
     void flushInput();
-    static Reply parseHs(const String& line);
     void idle() { if (hook_) hook_(); }
 
     HardwareSerial& port_ = Serial1;

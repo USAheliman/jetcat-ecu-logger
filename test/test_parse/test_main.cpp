@@ -2,6 +2,7 @@
 // Parses the real dump captured from the BO 105 ECU (serial 3934) on 1 Nov 2026
 // and checks the values against the Excel workbook made from the same dump.
 #include <unity.h>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -68,11 +69,37 @@ void test_aux_and_batt_are_separate_fields() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 7.64f, first.batt);
 }
 
+
+// Ring-buffer layout of the V6 dump of 10 Nov 2026 (flight 3934-0557):
+// [X 498..635][A 67..725][B 22..135][C 24..115][X 497]. The wrap row 497 is later than
+// C's last row, so before the fix it was glued onto C and C was moved to the front.
+static void addRows(std::string& d, int from, int to) {
+    char b[96];
+    for (int t = from; t <= to; ++t) {
+        std::snprintf(b, sizeof(b), "%d\t33000\t33000\t400\t0.36\t11\t19\t0\t7.80\t0\t0\t\n", t);
+        d += b;
+    }
+}
+void test_wrap_row_later_than_newest_run() {
+    std::string d = "1,XLO,1\rDATA START\nTime\tRpm\tSetRpm\tTemp\tPump\tState\tTHR\tAUX\tBatt\tAirSpd\tSetSpd\t\n";
+    addRows(d, 498, 635); addRows(d, 67, 725); addRows(d, 22, 135); addRows(d, 24, 115); addRows(d, 497, 497);
+    d += "DATA END\n1,HS,OK\r";
+    XloResult r = parseXlo(d.data(), d.size());
+    TEST_ASSERT_EQUAL_UINT32(0, r.badLines);
+    TEST_ASSERT_TRUE(r.wrapJoined);
+    TEST_ASSERT_EQUAL_UINT32(4, r.runs.size());
+    TEST_ASSERT_EQUAL_INT32(497, r.runs[0].rows.front().time);
+    TEST_ASSERT_EQUAL_INT32(635, r.runs[0].rows.back().time);
+    TEST_ASSERT_EQUAL_INT32(24, r.runs.back().rows.front().time);    // newest run = C
+    TEST_ASSERT_EQUAL_INT32(115, r.runs.back().rows.back().time);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parses_all_rows);
     RUN_TEST(test_splits_runs_and_rejoins_wrap);
     RUN_TEST(test_last_flight_summary_matches_workbook);
     RUN_TEST(test_aux_and_batt_are_separate_fields);
+    RUN_TEST(test_wrap_row_later_than_newest_run);
     return UNITY_END();
 }

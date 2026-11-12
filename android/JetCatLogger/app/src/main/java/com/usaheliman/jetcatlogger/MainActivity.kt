@@ -338,7 +338,12 @@ class MainActivity : AppCompatActivity() {
         for (i in 0 until arr.length()) {
             val f = arr.optJSONObject(i) ?: continue
             val key = f.optString("key"); if (key.isEmpty()) continue
-            if (!store.hasJson(key)) fresh.add(key)
+            val old = store.json(key)
+            if (old == null) fresh.add(key)
+            else if (old.optJSONObject("last_run")?.toString() != f.optJSONObject("last_run")?.toString()) {
+                store.dropCsv(key)   // the logger rebuilt this flight: fetch its log again
+                drive.queue("xlsx")
+            }
             store.putJson(key, f)
         }
         if (fresh.isNotEmpty()) drive.queue("xlsx")

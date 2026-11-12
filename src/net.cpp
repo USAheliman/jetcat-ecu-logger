@@ -203,6 +203,16 @@ static void hDelete() {
     sendJson(store::removeFlight(key) ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"not found\"}");
 }
 
+// The complete XLO dump as received from the ECU (all runs), for copying flights between
+// loggers (console "pull") and for keeping the original data.
+static void hFlightRaw() {
+    String key = g_router.arg("key");
+    if (!store::validKey(key)) { sendErr(400, "bad key"); return; }
+    String f = store::readText("/flights/" + key + ".raw");
+    if (!f.length()) { sendErr(404, "no raw dump for this flight"); return; }
+    g_router.send(200, "text/plain", f);
+}
+
 static void hHelis() { sendJson(store::helisJson()); }
 
 static void hSetHeli() {
@@ -386,6 +396,7 @@ void begin() {
     onRoute("/api/flights.json", HTTP_GET, hFlights);
     onRoute("/api/flight.json", HTTP_GET, hFlightJson);
     onRoute("/api/flight.csv", HTTP_GET, hFlightCsv);
+    onRoute("/api/flight.raw", HTTP_GET, hFlightRaw);
     onRoute("/api/delete", HTTP_POST, hDelete);
     onRoute("/api/helis.json", HTTP_GET, hHelis);
     onRoute("/api/heli", HTTP_POST, hSetHeli);

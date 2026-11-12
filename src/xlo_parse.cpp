@@ -39,6 +39,9 @@ bool toFloat(const std::string& s, float& v) {
 
 // Column order is taken from the ECU's own header row.
 enum Col { C_TIME, C_RPM, C_SETRPM, C_TEMP, C_PUMP, C_STATE, C_THR, C_AUX, C_BATT, C_AIR, C_SETSPD, C_N };
+// Largest Time step between rows of one run; a bigger jump starts a new segment.
+const int32_t kMaxRowStepS = 10;
+
 const char* kColNames[C_N] = {"Time", "Rpm", "SetRpm", "Temp", "Pump", "State", "THR", "AUX", "Batt", "AirSpd", "SetSpd"};
 
 }  // namespace
@@ -115,11 +118,17 @@ XloResult parseXlo(const char* data, size_t len) {
     res.rowCount = rows.size();
     if (rows.empty()) return res;
 
-    // Split into segments wherever Time goes backwards (new ECU power-on session).
+    // Split into segments wherever Time goes backwards (new ECU power-on session) or jumps
+    // forward by more than a few seconds. Within a run the ECU logs a row about every
+    // second (steps of 0-2 s seen). The forward jump matters at the ring-buffer wrap: on
+    // 10 Nov 2026 the dump ended [.. C 24..115][X 497] and the 497 row, being later than 115,
+    // was glued onto run C, which the wrap join below then moved to the front as the oldest
+    // run - so every flight after 3934-0555 showed the run before it.
     std::vector<XloRun> segs(1);
     segs[0].rows.push_back(rows[0]);
     for (size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].time < rows[i - 1].time) segs.emplace_back();
+        int32_t step = rows[i].time - rows[i - 1].time;
+        if (step < 0 || step > kMaxRowStepS) segs.emplace_back();
         segs.back().rows.push_back(rows[i]);
     }
 

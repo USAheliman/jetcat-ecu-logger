@@ -84,17 +84,21 @@ const OFFS={0:"None",1:"Shut down via RC",2:"Overtemperature",3:"Ignition timeou
   11:"High temperature off",12:"Glow plug defective",13:"Watchdog timer",14:"Failsafe off",15:"Manual off (GSU)",
   16:"Power fail",17:"Temp sensor fail",18:"Fuel fail",19:"Prop fail",20:"2nd engine fail",
   21:"2nd engine differential too high",22:"2nd engine no communication"};
-// Trend metrics: key in last_run, label, unit, decimals. "Higher is worse" decides the warning colour only.
+// Trend metrics: key in last_run, label, unit, decimals, in-flight only.
+// In-flight metrics leave out ground runs (no time at flight throttle, e.g. a bench run to
+// idle), which would otherwise plot as 0 and drag the usual range down.
 const METRICS=[
-  ["mean_flight_pump_v","Pump voltage in flight","V",3],
-  ["start_s","Start time, ignition to run","s",0],
-  ["peak_start_egt_c","Peak EGT during start","°C",0],
-  ["mean_flight_egt_c","Mean EGT in flight","°C",1],
-  ["max_egt_c","Max EGT in flight","°C",0],
-  ["mean_flight_rpm","Mean RPM in flight","rpm",0],
-  ["min_flight_rpm","Lowest RPM in flight","rpm",0],
-  ["min_start_batt_v","Lowest battery during start","V",2],
+  ["mean_flight_pump_v","Pump voltage in flight","V",3,true],
+  ["start_s","Start time, ignition to run","s",0,false],
+  ["peak_start_egt_c","Peak EGT during start","°C",0,false],
+  ["mean_flight_egt_c","Mean EGT in flight","°C",1,true],
+  ["max_egt_c","Max EGT in flight","°C",0,true],
+  ["mean_flight_rpm","Mean RPM in flight","rpm",0,true],
+  ["min_flight_rpm","Lowest RPM in flight","rpm",0,true],
+  ["min_start_batt_v","Lowest battery during start","V",2,false],
 ];
+// A flight, not a ground run: some time at flight throttle more than 30 s after Run.
+function flew(f){return ((f.last_run||{}).mean_flight_rpm||0)>0;}
 const TREND_WINDOW=10, TREND_MIN=5;   // rolling mean ± 2σ of the previous 10 flights, from 5 flights
 
 // ---------------------------------------------------------------- state
@@ -146,7 +150,8 @@ function missedFlights(list){let n=0;for(let i=1;i<list.length;i++){const d=list
 
 // Trend flags: value outside mean ± 2σ of the previous TREND_WINDOW flights.
 function trendSeries(list,key){
-  const pts=list.map(f=>({f,v:(f.last_run||{})[key]})).filter(p=>p.v!=null&&p.v>=0);
+  const inFlight=(METRICS.find(m=>m[0]===key)||[])[4];
+  const pts=list.filter(f=>!inFlight||flew(f)).map(f=>({f,v:(f.last_run||{})[key]})).filter(p=>p.v!=null&&p.v>=0);
   for(let i=0;i<pts.length;i++){
     const prev=pts.slice(Math.max(0,i-TREND_WINDOW),i).map(p=>p.v);
     if(prev.length>=TREND_MIN){
@@ -290,10 +295,10 @@ async function showFlight(key){
       <div class="kv"><div class="k">Run time</div><div class="v">${mmss(runSecs(f))}</div></div>
       <div class="kv"><div class="k">Start, ignition to run</div><div class="v">${lr.start_s>=0?lr.start_s+" s":"–"}</div></div>
       <div class="kv"><div class="k">Peak EGT, start</div><div class="v">${lr.peak_start_egt_c} °C</div></div>
-      <div class="kv"><div class="k">Max EGT, flight</div><div class="v">${lr.max_egt_c} °C</div></div>
-      <div class="kv"><div class="k">Mean RPM, flight</div><div class="v">${Math.round(lr.mean_flight_rpm).toLocaleString()}</div></div>
-      <div class="kv"><div class="k">Lowest RPM, flight</div><div class="v">${lr.min_flight_rpm.toLocaleString()}</div></div>
-      <div class="kv"><div class="k">Mean pump, flight</div><div class="v">${lr.mean_flight_pump_v.toFixed(3)} V</div></div>
+      <div class="kv"><div class="k">Max EGT, flight</div><div class="v">${flew(f)?lr.max_egt_c+" °C":"– ground run"}</div></div>
+      <div class="kv"><div class="k">Mean RPM, flight</div><div class="v">${flew(f)?Math.round(lr.mean_flight_rpm).toLocaleString():"–"}</div></div>
+      <div class="kv"><div class="k">Lowest RPM, flight</div><div class="v">${flew(f)?lr.min_flight_rpm.toLocaleString():"–"}</div></div>
+      <div class="kv"><div class="k">Mean pump, flight</div><div class="v">${flew(f)?lr.mean_flight_pump_v.toFixed(3)+" V":"–"}</div></div>
       <div class="kv"><div class="k">Lowest battery, start</div><div class="v">${lr.min_start_batt_v.toFixed(2)} V</div></div>
       <div class="kv"><div class="k">Shutdown</div><div class="v" style="font-size:14px">${sess?esc(OFFS[f.off_condition]||f.off_condition):"–"}</div></div>
       <div class="kv"><div class="k">Failsafes</div><div class="v">${sess?f.failsafe_count+(f.failsafe_count?" ("+f.failsafe_time_s+" s)":""):"–"}</div></div>
@@ -366,13 +371,14 @@ function trendsView(){
     <div class="note">${list.length} flight${list.length>1?"s":""} stored. The shaded band is the mean ± 2σ of the previous ${TREND_WINDOW} flights; circled points fall outside it.
     ${list.length<TREND_MIN+1?` Flags start once ${TREND_MIN+1} flights are stored.`:""}</div></div>
     <div class="card">${METRICS.map(([key,label])=>chartBlock(label,"t-"+key)).join("")}
-    <div class="note">X axis: the ECU's run count, so gaps show flights that were not downloaded. Tap a point to open that flight.</div></div>`;
+    <div class="note">X axis: the ECU's run count, so gaps show flights that were not downloaded. Ground runs (no time at flight throttle) appear in the start charts only. Tap a point to open that flight.</div></div>`;
 }
 function drawTrends(){
   const list=(bySerial()[trendSerial])||[];
   if(list.length===1){const el=$("#tf-charts");if(el)flightCharts(el,list[0],"tf");return;}
   for(const [key,label,unit,dp] of METRICS){
-    const pts=trendSeries(list,key), cv=$("#t-"+key); if(!cv||!pts.length) continue;
+    const pts=trendSeries(list,key), cv=$("#t-"+key); if(!cv) continue;
+    if(!pts.length){cv.outerHTML=`<div class="note">No flights yet - only ground runs, which are left out of the in-flight charts.</div>`;continue;}
     const x=pts.map(p=>p.f.runs_ok);
     drawChart(cv,{x,points:true,series:[{y:pts.map(p=>p.v),color:css("--accent")}],
       band:{lo:pts.map(p=>p.lo??null),hi:pts.map(p=>p.hi??null)},
