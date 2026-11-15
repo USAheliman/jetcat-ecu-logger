@@ -1,17 +1,21 @@
-# Release, either way:
-#   - Actions > Release > Run workflow, type the version (e.g. 1.0.0) and the notes; or
-#   - push an annotated tag v<version> (e.g. v1.0.1); its message becomes the notes.
-#     Claude releases this way once Mehul has confirmed the changes work.
+# Release, any of three ways:
+#   - Claude (or anyone) edits RELEASE.txt on main: first line the version (e.g. 1.1.0),
+#     the rest the notes. Pushing that change publishes the release. This is how Claude
+#     releases, once Mehul has asked for it (Claude's session can push commits but not tags);
+#   - Actions > Release > Run workflow, type the version and the notes; or
+#   - push an annotated tag v<version>; its message becomes the notes.
 # Builds the logger firmware for both boards and the Android app, all stamped with that
 # version, and publishes GitHub release v<version>:
 #   JetCatLogger.apk, firmware-xiao_plus.bin, firmware-devkitc.bin, release.json
 # The app offers the new app version and lists the firmware in Settings > Updates.
-# Version numbers are only ever set here, by Mehul; every other build is "dev".
+# Version numbers are only ever set here; every other build is "dev".
 name: Release
 
 on:
   push:
     tags: [ "v*.*.*" ]
+    branches: [ main ]
+    paths: [ "RELEASE.txt" ]
   workflow_dispatch:
     inputs:
       version:
@@ -24,30 +28,36 @@ on:
 permissions:
   contents: write
 
+concurrency: { group: release, cancel-in-progress: false }
+
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Version and notes (from the form, or from the pushed tag)
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Version and notes (from RELEASE.txt, the form, or the pushed tag)
         env:
           IN_VERSION: ${{ inputs.version }}
           IN_NOTES: ${{ inputs.notes }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then V="${GITHUB_REF_NAME#v}"; else V="$IN_VERSION"; fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+            git fetch --force --tags -q
+            git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)' | sed '/-----BEGIN PGP/,$d' > "$RUNNER_TEMP/notes.txt"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            V=$(head -1 RELEASE.txt | tr -d ' \r\n')
+            tail -n +2 RELEASE.txt | sed '/./,$!d' > "$RUNNER_TEMP/notes.txt"
+          else
+            V="$IN_VERSION"
+            printf '%s' "$IN_NOTES" > "$RUNNER_TEMP/notes.txt"
+          fi
+          [ -s "$RUNNER_TEMP/notes.txt" ] || echo "Release $V" > "$RUNNER_TEMP/notes.txt"
           echo "VERSION=$V" >> "$GITHUB_ENV"
-          printf '%s' "$IN_NOTES" > "$RUNNER_TEMP/notes.txt"
+          echo "Version $V"; cat "$RUNNER_TEMP/notes.txt"
       - name: Check the version number
         run: |
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Version must look like 1.0.0"; exit 1; }
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - name: Notes from the tag message
-        if: github.event_name == 'push'
-        run: |
-          git fetch --force --tags -q
-          git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)' | sed '/-----BEGIN PGP/,$d' > "$RUNNER_TEMP/notes.txt"
-          [ -s "$RUNNER_TEMP/notes.txt" ] || echo "Release $VERSION" > "$RUNNER_TEMP/notes.txt"
-          cat "$RUNNER_TEMP/notes.txt"
       - name: Not already released
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
