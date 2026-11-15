@@ -140,7 +140,7 @@ class OneDrive(private val context: Context, private val clientId: String) {
         return n
     }
 
-    private fun folder(s: String) = s.replace(Regex("[\"*:<>?/\\\\|#%]"), " ").trim().ifEmpty { "Heli" }
+    private fun folder(s: String) = s.replace(Regex("[\"*:<>?/\\\\|#%]"), " ").trim().ifEmpty { "Model" }
 
     private fun put(path: String, bytes: ByteArray, type: String) {
         val enc = path.split('/').joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }

@@ -462,11 +462,11 @@ static void pullFrom(String host) {
             String serial = helis.substring(i + 1, e1), name = helis.substring(v1 + 1, v2);
             i = v2 + 1;
             if (mine.indexOf("\"" + serial + "\":") < 0 && store::setHeliName(serial, name)) {
-                Con.println("[pull] heli " + serial + " = " + name); names++;
+                Con.println("[pull] model " + serial + " = " + name); names++;
             }
         }
     }
-    Con.printf("[pull] done: %u copied, %u already here, %u failed, %u heli names added\n",
+    Con.printf("[pull] done: %u copied, %u already here, %u failed, %u model names added\n",
                copied, skipped, failed, names);
 }
 
@@ -483,7 +483,7 @@ static void printHelp() {
         "  rmall YES         delete all flights\n"
         "  time <epoch>      set the clock (UTC seconds), e.g. from https://www.epochconverter.com\n"
         "  dl                download again now (duplicates are still skipped)\n"
-        "  pull <ip>         copy flights + heli names from another logger on WiFi\n"
+        "  pull <ip>         copy flights + model names from another logger on WiFi\n"
         "  reparse <key>|all rebuild summaries + CSVs from the stored raw logs\n"
         "  wifi <ssid> <pw>  join home WiFi (for the browser and OTA updates); 'wifi off' to stop\n"
         "  net               WiFi, Bluetooth and firmware partition status\n"

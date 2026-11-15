@@ -455,7 +455,7 @@ function fleetView(){
     return `<div class="card heli" onclick="openFlight('${esc(last.key)}')" style="cursor:pointer;--hc:${heliColour(s)}">
       ${ph?`<div class="hphoto" style="background-image:url('${ph.url}')"><span class="tag">${esc(nm)}</span></div>`
           :`<div class="hphoto ph"><div class="ini">${esc((nm.match(/[A-Za-z0-9]/)||["?"])[0].toUpperCase())}</div>
-             <div class="hint">Add a photo in Settings › Helis</div></div>`}
+             <div class="hint">Add a photo in Settings › Models</div></div>`}
       <div class="row"><h2>${esc(nm)}</h2><span class="sub">${last.turbine_type?esc(last.turbine_type)+" · ":""}ECU ${esc(s)}</span></div>
       <div class="sub">Last flight ${esc(whenText(last))}</div>
       <div class="grid">
@@ -471,7 +471,7 @@ function fleetView(){
         :`<div class="svc" style="--svc:var(--ink2)" onclick="event.stopPropagation();tab='settings';render()"><div class="top"><span class="k">Since last service</span><span class="linkbtn">Set service hours ›</span></div></div>`}
       <div>${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}
         ${missed?`<span class="pill warn">${missed} flight${missed>1?"s":""} not captured</span>`:""}
-        ${helis[s]?"":`<span class="pill">Tap Settings to name this heli</span>`}
+        ${helis[s]?"":`<span class="pill">Tap Settings to name this model</span>`}
         <span class="pill">${list.length} stored</span></div>
     </div>`;}).join("");
 }
@@ -489,8 +489,8 @@ function flightsView(){
     <div id="flist">${flightListHtml()}</div>`;
   return `<div class="card s-indigo">
     <div class="row"><h2 style="color:#4f46e5">Filters</h2><button class="linkbtn" onclick="setF('open',false)">Hide filters ▴</button></div>
-    <div class="fsec"><div class="lbl" style="--lc:var(--accent)">Heli</div>
-      <div class="chips">${chip("All helis",flt.heli==="all","setF('heli','all')","#475569")}${serials.map(sr=>chip(heliName(sr),flt.heli===sr,`setF('heli','${esc(sr)}')`,heliColour(sr))).join("")}</div></div>
+    <div class="fsec"><div class="lbl" style="--lc:var(--accent)">Model</div>
+      <div class="chips">${chip("All models",flt.heli==="all","setF('heli','all')","#475569")}${serials.map(sr=>chip(heliName(sr),flt.heli===sr,`setF('heli','${esc(sr)}')`,heliColour(sr))).join("")}</div></div>
     <div class="fsec"><div class="lbl" style="--lc:var(--c-date)">When</div>
       <div class="chips">${[["all","Any date"],["today","Today"],["7d","7 days"],["month","This month"],["custom","Custom…"]].map(([v,l])=>chip(l,flt.date===v,`setF('date','${v}')`,"var(--c-date)")).join("")}</div>
     ${flt.date==="custom"?`<div class="frow"><div><label>From</label>${inp("from","","date")}</div><div><label>To</label>${inp("to","","date")}</div></div>`:""}</div>
@@ -498,10 +498,10 @@ function flightsView(){
       <div class="chips">${[["all","Flights + ground runs"],["flights","Flights"],["ground","Ground runs"]].map(([v,l])=>chip(l,flt.type===v,`setF('type','${v}')`,"var(--c-type)")).join("")}</div></div>
     <div class="fsec"><div class="lbl" style="--lc:var(--c-bad)">Show only</div>
       <div class="chips">${[["flagged","Trend flags","var(--c-bad)"],["abnormal","Abnormal shutdown","var(--c-bad)"],["failsafe","Failsafe","var(--c-warn)"],["nolog","No log","var(--c-warn)"]].map(([k,l,c])=>chip((flt.only[k]?"✓ ":"")+l,flt.only[k],`toggleOnly('${k}')`,c)).join("")}</div></div>
-    <label>Search</label><input type="search" placeholder="Heli, ECU serial, run number…" value="${esc(flt.q)}" oninput="typeF('q',this.value)">
+    <label>Search</label><input type="search" placeholder="Model, ECU serial, run number…" value="${esc(flt.q)}" oninput="typeF('q',this.value)">
     <div class="frow">
-      <div><label>Sort</label>${sel("fsort","sort",[["newest","Newest first"],["longest","Longest run"],["egt","Highest max EGT"],["start","Slowest start"],["run","Heli, run number"]])}</div>
-      <div><label>Group</label>${sel("fgroup","group",[["none","No grouping"],["heli","By heli"],["month","By month"]])}</div>
+      <div><label>Sort</label>${sel("fsort","sort",[["newest","Newest first"],["longest","Longest run"],["egt","Highest max EGT"],["start","Slowest start"],["run","Model, run number"]])}</div>
+      <div><label>Group</label>${sel("fgroup","group",[["none","No grouping"],["heli","By model"],["month","By month"]])}</div>
     </div>
     <div style="display:flex;gap:18px"><button class="linkbtn" onclick="setF('more',${!flt.more})">${flt.more?"▴ Fewer filters":"▾ More filters"}</button>
     ${filterActive()?`<button class="linkbtn" onclick="clearFilters()">Clear filters</button>`:""}</div>
@@ -616,7 +616,7 @@ async function flightCharts(el,f,p){
     let b=null; if(pf){try{b=await flightLog(pf);}catch(e){}}
     el.innerHTML=chartBlock("RPM and set RPM",p+"-rpm")+chartBlock("EGT",p+"-egt")+chartBlock("Pump voltage",p+"-pump")+chartBlock("Battery",p+"-batt")+
       `<div class="note">Time from ignition${a.fromIgn?"":" (from the start of the log: no start was found)"}.
-       ${b?`Faint dashed line: previous flight, run ${pf.runs_ok}.`:"No earlier flight of this heli to compare with yet."}
+       ${b?`Faint dashed line: previous flight, run ${pf.runs_ok}.`:"No earlier flight of this model to compare with yet."}
        Tap or drag on any chart: the line shows the same moment on all four.</div>`;
     const k=v=>Math.round(v/1000)+"k", tx={xfmt:tfmt,xstep:1,xsteps:TIME_STEPS};
     const prev=(key,color)=>b?[{x:b.x,y:b[key],color,dash:[3,3],width:1.2,alpha:.45}]:[];
@@ -643,10 +643,10 @@ function trendsView(){
   if(flt.heli!=="all"&&g[flt.heli]) trendSerial=flt.heli;
   if(!trendSerial||!g[trendSerial]) trendSerial=serials[0];
   const list=trendList();
-  const pickSel=`<label for="ts">Heli</label>
+  const pickSel=`<label for="ts">Model</label>
     <select id="ts" onchange="trendSerial=this.value;if(flt.heli!=='all'){flt.heli=this.value;saveFilter();}render()">${serials.map(s=>`<option value="${esc(s)}"${s===trendSerial?" selected":""}>${esc(heliName(s))}</option>`).join("")}</select>
     ${dateText()?`<div class="note">Dates: <b>${esc(dateText())}</b> (set on the Flights tab). <button class="linkbtn" onclick="setF('date','all')">Show all dates</button></div>`:""}`;
-  if(!list.length) return `<div class="card heli" style="--hc:${heliColour(trendSerial)}">${pickSel}<div class="note">No flights for this heli in the chosen dates.</div></div>`;
+  if(!list.length) return `<div class="card heli" style="--hc:${heliColour(trendSerial)}">${pickSel}<div class="note">No flights for this model in the chosen dates.</div></div>`;
   if(list.length<2) return `<div class="card heli" style="--hc:${heliColour(trendSerial)}">${pickSel}
     <div class="note">Flight-to-flight trends need two flights. Here is the one flight.</div>
     <div class="btns"><button class="btn" onclick="openFlight('${esc(list[0].key)}')">Open flight details</button></div></div>
@@ -679,7 +679,7 @@ function settingsView(){
   const s=status||{}, serials=Object.keys(bySerial());
   const allSerials=[...new Set([...serials,...Object.keys(helis)])];
   const canEdit=s.via!=="phone";
-  return `<div class="card s-violet"><h2>Helis</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the heli.
+  return `<div class="card s-violet"><h2>Models</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the model.
     Name, photo and service hours are kept on the logger${IN_APP?" and copied to this phone":""}.</div>
     ${allSerials.length?allSerials.map(sr=>{const i=heliInfo[sr]||{}, tot=engineHours(sr), ph=photos[sr];
       return `<div class="hedit" style="--hc:${heliColour(sr)}">
@@ -700,7 +700,7 @@ function settingsView(){
       ${canEdit?`<div class="btns">${tot!=null?`<button class="btn" onclick="servicedNow('${esc(sr)}')">Serviced now (${tot.toFixed(1)} h, today)</button>`:""}
         <button class="btn primary" onclick="saveService('${esc(sr)}')">Save service</button></div>`
         :`<div class="note">Connect to the logger to change these.</div>`}
-    </div>`;}).join(""):`<div class="note">Helis appear here once a flight has been downloaded.</div>`}
+    </div>`;}).join(""):`<div class="note">Models appear here once a flight has been downloaded.</div>`}
   </div>
   ${appCard()}
   ${updatesCard(s)}
@@ -863,7 +863,7 @@ function pickPhoto(serial,input){
   img.src=url;
 }
 async function removePhoto(serial){
-  if(!confirm("Remove this heli's photo?"))return;
+  if(!confirm("Remove this model's photo?"))return;
   try{heliInfo=await post("/api/photo",{serial,delete:"1"});delete photos[serial];toast("Photo removed");render();}
   catch(e){toast("Could not remove: "+e.message);}
 }
@@ -914,7 +914,7 @@ async function exportLogs(list){
       }catch(e){skipped.push(f.key);continue;}
       const lines=text.replace(/\r/g,"").trim().split("\n");
       if(lines.length<2){skipped.push(f.key);continue;}
-      if(!head){head=lines[0];out.push("key,heli,"+head);}
+      if(!head){head=lines[0];out.push("key,model,"+head);}
       const pre=q(f.key)+","+q(heliName(f.serial))+",";
       for(let j=1;j<lines.length;j++) out.push(pre+lines[j]);
     }
@@ -924,7 +924,7 @@ async function exportLogs(list){
   }finally{exporting=false;}
 }
 function exportSummary(only){
-  const cols=["key","serial","heli","runs_ok","starts_failed","when","time_source","run_s","start_s","peak_start_egt_c",
+  const cols=["key","serial","model","runs_ok","starts_failed","when","time_source","run_s","start_s","peak_start_egt_c",
     "max_egt_c","mean_flight_egt_c","mean_flight_rpm","min_flight_rpm","mean_flight_pump_v","max_pump_v","min_start_batt_v",
     "off_condition","failsafe_count","failsafe_time_s","total_run_time_h","ambient_c","log_status"];
   const q=v=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};

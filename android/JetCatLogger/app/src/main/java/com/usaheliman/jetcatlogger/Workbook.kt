@@ -46,7 +46,7 @@ object Workbook {
 
     private val COLS = listOf(
         Col("Flight", "Flight key: ECU serial and the ECU's count of successful runs.") { f, _ -> f.optString("key") },
-        Col("Heli", "Heli name set on the Settings page.") { _, heli -> heli },
+        Col("Model", "Model name set on the Settings page.") { _, heli -> heli },
         Col("ECU serial", "Serial number of the ECU (fixed to its turbine).") { f, _ -> f.optString("serial") },
         Col("Run no.", "ECU's count of successful runs after this flight.") { f, _ -> num(f, "runs_ok") },
         Col("Failed starts", "ECU's total count of failed starts.") { f, _ -> num(f, "starts_failed") },
@@ -83,7 +83,7 @@ object Workbook {
         sheets.add("Summary" to rows(list))
         val used = HashSet<String>().apply { add("summary"); add("notes") }
         for ((h, fs) in list.groupBy { heli(it.optString("serial")) }) {
-            var name = h.replace(Regex("[\\[\\]:*?/\\\\]"), " ").trim().take(31).ifEmpty { "Heli" }
+            var name = h.replace(Regex("[\\[\\]:*?/\\\\]"), " ").trim().take(31).ifEmpty { "Model" }
             var n = 2
             while (name.lowercase() in used) { name = name.take(28) + " " + n++ }
             used.add(name.lowercase())
@@ -91,7 +91,7 @@ object Workbook {
         }
         sheets.add("Notes" to listOf(listOf<Any?>("Column", "Meaning")) + COLS.map { listOf(it.title, it.note) } +
             listOf(listOf<Any?>(), listOf<Any?>("Written by the JetCat Logger app from the flights kept on the phone.", null),
-                   listOf<Any?>("Each flight's second-by-second log is in Flights/<heli>/<flight>.csv beside this file.", null)))
+                   listOf<Any?>("Each flight's second-by-second log is in Flights/<model>/<flight>.csv beside this file.", null)))
         return xlsx(sheets)
     }
 
