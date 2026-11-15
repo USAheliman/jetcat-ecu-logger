@@ -1,16 +1,3 @@
-1.1.0
+1.1.1
 
-Flights tab
-- Filters: heli, date range, flights or ground runs, trend flags, abnormal shutdown, failsafe, no log
-- Search, sort and group; more filters for run time, max EGT, start time and ambient temperature
-- Trends follow the heli and date filter; export the flights shown
-
-Fleet
-- Photo of each heli (choose it in Settings > Helis)
-- Engine run time since last service, with a bar against the service interval
-- Settings > Helis: name, photo, hours and date of last service, interval, 'Serviced now'
-
-Look
-- Brighter, more colourful pages with clearer sections
-
-Install the firmware update as well: photos and service hours are stored on the logger.
+Stronger Bluetooth: the logger now transmits at +18 dBm (was +9 dBm), so it can be reached from further away and from inside its case.
