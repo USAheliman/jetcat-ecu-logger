@@ -534,7 +534,10 @@ function flightListHtml(){
       <div class="stat" style="--s1:#0d9488;--s2:#0891b2"><div class="k">Run time</div><div class="v">${hms(totalRun(list))}</div></div>
       <div class="stat" style="--s1:#ea580c;--s2:#db2777"><div class="k">Flights</div><div class="v">${fl}${list.length-fl?` <span style="font-size:13px;opacity:.85">+${list.length-fl} gnd</span>`:""}</div></div>
     </div><div class="fdesc" id="fsum">${esc(summaryText(list))}</div>`;
-  const exp=list.length?`<div class="btns"><button class="btn" onclick="exportSummary(filteredFlights())">${list.length===1?"Export this flight":`Export ${list.length===flights.length?"all":"these"} ${list.length} flights`} (CSV)</button></div>`:"";
+  const what=list.length===1?"this flight":`${list.length===flights.length?"all":"these"} ${list.length} flights`;
+  const exp=list.length?`<div class="sub" style="margin-top:6px">Export ${what}:</div><div class="btns">
+    <button class="btn primary" onclick="exportLogs(filteredFlights())">Full logs, every second (CSV)</button>
+    <button class="btn" onclick="exportSummary(filteredFlights())">Summary, one line per flight (CSV)</button></div>`:"";
   if(!list.length)return head+`<div class="card empty">No flights match these filters.${filterActive()?` <button class="linkbtn" onclick="clearFilters()">Clear filters</button>`:""}</div>`;
   let body;
   if(flt.group==="none")body=list.map(f=>flightItem(f,g)).join("");
@@ -891,6 +894,34 @@ function saveFile(name,text){
 }
 async function exportFlight(key){
   try{saveFile(key+".csv",await api("/api/flight.csv?key="+encodeURIComponent(key)));}catch(e){toast(e.message);}
+}
+// Every second of every flight shown, in one file: the logger's own log columns, with the
+// flight key and heli name in front of each row so the flights can be told apart in Excel.
+let exporting=false;
+async function exportLogs(list){
+  if(exporting)return; exporting=true;
+  const q=v=>{v=v==null?"":String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const sorted=[...list].sort((a,b)=>a.serial.localeCompare(b.serial)||a.runs_ok-b.runs_ok);
+  let head=null, out=[], skipped=[];
+  try{
+    for(let i=0;i<sorted.length;i++){
+      const f=sorted[i];
+      toast(`Reading log ${i+1} of ${sorted.length}…`);
+      let text;
+      try{
+        if(!csvCache[f.key]) csvCache[f.key]=await api("/api/flight.csv?key="+encodeURIComponent(f.key));
+        text=csvCache[f.key];
+      }catch(e){skipped.push(f.key);continue;}
+      const lines=text.replace(/\r/g,"").trim().split("\n");
+      if(lines.length<2){skipped.push(f.key);continue;}
+      if(!head){head=lines[0];out.push("key,heli,"+head);}
+      const pre=q(f.key)+","+q(heliName(f.serial))+",";
+      for(let j=1;j<lines.length;j++) out.push(pre+lines[j]);
+    }
+    if(!out.length){toast("None of these flights has a log to export.");return;}
+    saveFile(sorted.length===1?sorted[0].key+".csv":"jetcat-flight-logs.csv",out.join("\r\n"));
+    toast(skipped.length?`Exported. No log for: ${skipped.join(", ")}`:"Exported");
+  }finally{exporting=false;}
 }
 function exportSummary(only){
   const cols=["key","serial","heli","runs_ok","starts_failed","when","time_source","run_s","start_s","peak_start_egt_c",
