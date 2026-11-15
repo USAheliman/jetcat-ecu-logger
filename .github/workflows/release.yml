@@ -81,16 +81,42 @@ jobs:
           grep -c "$VERSION" out/firmware-xiao_plus.bin >/dev/null || { echo "::error::version not found in firmware"; exit 1; }
 
       # ---- app
+      # Samsung's Auto Blocker must be switched off to install an app update, so the app is
+      # only rebuilt (and offered) when it has changed since the last release: anything under
+      # android/ or the pages it carries (data/). Otherwise the last release's APK
+      # and app_version_code are carried over, and the app does not offer an update.
+      - name: Did the app change?
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          PREV=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)
+          echo "Last release: ${PREV:-none}"
+          if [ -n "$PREV" ] && git rev-parse -q --verify "refs/tags/$PREV" >/dev/null \
+             && git diff --quiet "$PREV" HEAD -- android data \
+             && gh release download "$PREV" -p JetCatLogger.apk -p release.json -D "$RUNNER_TEMP/prev"; then
+            echo "App unchanged since $PREV: carrying its APK over"
+            echo "APP_CHANGED=no" >> "$GITHUB_ENV"
+            cp "$RUNNER_TEMP/prev/JetCatLogger.apk" out/JetCatLogger.apk
+            CODE=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/prev/release.json'))['app_version_code'])")
+            APPV=$(python3 -c "import json;d=json.load(open('$RUNNER_TEMP/prev/release.json'));print(d.get('app_version',d['version']))")
+            printf '{"version":"%s","app_version_code":%s,"app_version":"%s","commit":"%s"}\n' "$VERSION" "$CODE" "$APPV" "${GITHUB_SHA::7}" > out/release.json
+            cat out/release.json
+          else
+            echo "APP_CHANGED=yes" >> "$GITHUB_ENV"
+          fi
       - uses: actions/setup-java@v4
+        if: env.APP_CHANGED == 'yes'
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
+        if: env.APP_CHANGED == 'yes'
         with: { gradle-version: "8.10.2" }
       - name: Signing key
+        if: env.APP_CHANGED == 'yes'
         env: { KS: "${{ secrets.APP_KEYSTORE_B64 }}" }
         run: |
           [ -n "$KS" ] || { echo "::error::Add the APP_KEYSTORE_B64 and APP_KEYSTORE_PASSWORD secrets"; exit 1; }
           echo "$KS" | base64 -d > "$RUNNER_TEMP/release.p12"
       - name: Build the app
+        if: env.APP_CHANGED == 'yes'
         working-directory: android/JetCatLogger
         env: { KS_PW: "${{ secrets.APP_KEYSTORE_PASSWORD }}" }
         run: |
@@ -104,7 +130,7 @@ jobs:
           AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)
           CODE=$("$AAPT" dump badging "$GITHUB_WORKSPACE/out/JetCatLogger.apk" | head -1 | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
           [ -n "$CODE" ] || { echo "::error::could not read the app versionCode"; exit 1; }
-          printf '{"version":"%s","app_version_code":%s,"commit":"%s"}\n' "$VERSION" "$CODE" "${GITHUB_SHA::7}" > "$GITHUB_WORKSPACE/out/release.json"
+          printf '{"version":"%s","app_version_code":%s,"app_version":"%s","commit":"%s"}\n' "$VERSION" "$CODE" "$VERSION" "${GITHUB_SHA::7}" > "$GITHUB_WORKSPACE/out/release.json"
           cat "$GITHUB_WORKSPACE/out/release.json"
 
       - name: Publish
