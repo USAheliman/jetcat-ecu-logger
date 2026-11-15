@@ -948,7 +948,7 @@ function exportSummary(only){
 // with native, editable charts and no library. A workbook is a zip of XML parts; the zip
 // is deflated with the browser's CompressionStream when it has one, otherwise stored.
 // Cells: number, string, null, or {v, s} with s a style name from XL_STYLE.
-const XL_STYLE={b:1,h:2,title:3,"2dp":4,"3dp":5,int:6,bad:7,good:8,note:9,sub:10,"1dp":11,dt:12,wrap:13,warn:14,big:15,k:16,mmss:17};
+const XL_STYLE={b:1,h:2,title:3,"2dp":4,"3dp":5,int:6,bad:7,good:8,note:9,sub:10,"1dp":11,dt:12,wrap:13,warn:14,big:15,k:16,mmss:17,badc:18,"bad0":19,"bad1":20,"bad2":21,"bad3":22};
 const XL_STYLES_XML=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="4"><numFmt numFmtId="164" formatCode="d mmm yyyy hh:mm"/><numFmt numFmtId="165" formatCode="0.0"/><numFmt numFmtId="166" formatCode="0.000"/><numFmt numFmtId="167" formatCode="[m]:ss"/></numFmts>
@@ -974,7 +974,7 @@ const XL_STYLES_XML=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="18">
+<cellXfs count="23">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf>
@@ -993,6 +993,11 @@ const XL_STYLES_XML=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="1" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left"/></xf>
 <xf numFmtId="0" fontId="6" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
 <xf numFmtId="167" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="0" fontId="4" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="3" fontId="4" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"/>
+<xf numFmtId="165" fontId="4" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"/>
+<xf numFmtId="2" fontId="4" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"/>
+<xf numFmtId="166" fontId="4" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -1364,7 +1369,7 @@ async function exportTrends(){
       dt?`Dates: ${dt} (the Flights tab's date filter). Usual ranges still use all earlier flights.`:"All dates.",
       [],[{v:"Measures",s:"sub"}],...METRICS.map(([k,label,unit,dp,inF])=>[{v:`${label} (${unit})${inF?" - in flight only":""}`,s:"wrap"}])]);
     const sum=[[ "Model","ECU","Flights","Ground runs","Run time (h)","Engine total (h)","Since service (h)","Last flight","Flags in last 5 flights"].map(v=>({v,s:"h"}))];
-    wb.sheet("Summary",{rows:sum,widths:[18,9,9,11,12,14,14,22,40],freeze:1,heights:{0:32}});
+    wb.sheet("Summary",{rows:sum,widths:[18,9,9,11,12,14,14,26,70],freeze:1,heights:{0:32}});
     for(const sr of serials){
       const all=g[sr], shown=all.filter(dateOk); if(!shown.length)continue;
       const series={}; for(const [k] of METRICS) series[k]=new Map(trendSeries(all,k).map(p=>[p.f,p]));
@@ -1380,14 +1385,14 @@ async function exportTrends(){
           const p=series[k].get(f), st=dp===0?"int":dp===1?"1dp":dp===2?"2dp":"3dp";
           if(!p){row.push(null);extra.push(null,null,null);return;}
           if(p.flag)flags.push(label);
-          row.push({v:+(+p.v).toFixed(dp),s:p.flag?"bad":st});
+          row.push({v:+(+p.v).toFixed(dp),s:p.flag?"bad"+dp:st});
           extra.push(p.lo!=null?{v:+p.lo.toFixed(dp+1),s:st}:null,p.hi!=null?{v:+p.hi.toFixed(dp+1),s:st}:null,p.flag?p.v:null);
         });
-        row.push(flags.length?{v:flags.join(", "),s:"bad"}:"");
+        row.push(flags.length?{v:flags.join(", "),s:"badc"}:"");
         rows.push([...row,null,...extra]);
         flagsLast.push(flags);
       }
-      const sh=wb.sheet(heliName(sr),{rows,widths:[8,20,11,...METRICS.map(()=>13),36,3,...chartHead.map(()=>12)],freeze:1,heights:{0:45}});
+      const sh=wb.sheet(heliName(sr),{rows,widths:[8,20,11,...METRICS.map(()=>13),70,3,...chartHead.map(()=>12)],freeze:1,heights:{0:45}});
       const n=shown.length;
       sh.charts=METRICS.map(([k,label,unit,dp],i)=>{
         const vc=3+i, lc=dataCols+i*3;
@@ -1401,7 +1406,7 @@ async function exportTrends(){
       const tot=engineHours(sr), sv=serviceInfo(sr), last=all[all.length-1], recent=flagsLast.slice(-5).flat();
       sum.push([heliName(sr),sr,shown.filter(flew).length,shown.filter(f=>!flew(f)).length,{v:+(totalRun(shown)/3600).toFixed(2),s:"2dp"},
         tot!=null?{v:+tot.toFixed(1),s:"1dp"}:null,sv?{v:+sv.since.toFixed(1),s:sv.frac!=null&&sv.frac>=1?"bad":sv.frac!=null&&sv.frac>=0.8?"warn":"1dp"}:"not set",
-        whenText(last),recent.length?{v:[...new Set(recent)].join(", "),s:"bad"}:{v:"none",s:"good"}]);
+        whenText(last),recent.length?{v:[...new Set(recent)].join(", "),s:"badc"}:{v:"none",s:"good"}]);
     }
     await downloadXlsx(wb,"JetCat trends.xlsx");
   }catch(e){toast("Could not build the workbook: "+e.message);}
