@@ -9,43 +9,64 @@
      Self-contained: no internet needed at the field. GPL-3.0-or-later. -->
 <style>
 :root{
-  --bg:#f4f5f7; --card:#fff; --ink:#1b1f24; --ink2:#5b6470; --line:#dfe3e8; --accent:#0b6bcb;
-  --good:#1a7f37; --warn:#b26b00; --bad:#c62828; --band:rgba(11,107,203,.10);
-  --rpm:#0b6bcb; --egt:#d1495b; --pump:#2a9d8f; --batt:#7b5ea7; --set:#9aa5b1;
+  --bg:#eef2f8; --card:#fff; --ink:#16202c; --ink2:#566273; --line:#dde3ec; --accent:#2563eb;
+  --good:#16a34a; --warn:#d97706; --bad:#dc2626; --band:rgba(37,99,235,.10);
+  --rpm:#2563eb; --egt:#e11d48; --pump:#0d9488; --batt:#7c3aed; --set:#94a3b8;
+  --hdr1:#1e40af; --hdr2:#0891b2;
+  --c-date:#0d9488; --c-type:#7c3aed; --c-bad:#dc2626; --c-warn:#d97706;
+  --tint:.12;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#0f1216; --card:#181c22; --ink:#e7eaee; --ink2:#9aa4b0; --line:#2a3038; --accent:#4ea1ff;
-  --good:#3fb950; --warn:#e3a008; --bad:#ff6b6b; --band:rgba(78,161,255,.12);
-  --rpm:#4ea1ff; --egt:#ff7b8a; --pump:#4fd1c5; --batt:#b39ddb; --set:#6b7682;
+  --bg:#0b1018; --card:#151c27; --ink:#e8edf4; --ink2:#9eabbc; --line:#263042; --accent:#60a5fa;
+  --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --band:rgba(96,165,250,.14);
+  --rpm:#60a5fa; --egt:#fb7185; --pump:#2dd4bf; --batt:#a78bfa; --set:#64748b;
+  --hdr1:#1e3a8a; --hdr2:#0e7490;
+  --c-date:#2dd4bf; --c-type:#a78bfa; --c-bad:#f87171; --c-warn:#fbbf24;
+  --tint:.20;
 }}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   padding-bottom:calc(64px + env(safe-area-inset-bottom))}
-header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px}
-header h1{font-size:17px;margin:0;font-weight:650}
-#status{font-size:12.5px;color:var(--ink2);margin-top:2px}
-#progress{height:3px;background:var(--line);margin-top:8px;border-radius:2px;overflow:hidden;display:none}
-#progress div{height:100%;width:0;background:var(--accent);transition:width .4s}
+header{position:sticky;top:0;z-index:5;background:linear-gradient(120deg,var(--hdr1),var(--hdr2));color:#fff;
+  padding:12px 16px 12px;box-shadow:0 2px 10px rgba(15,30,60,.25)}
+header h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.2px}
+header h1::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;background:#fbbf24;
+  margin-right:8px;vertical-align:2px;box-shadow:0 0 0 3px rgba(251,191,36,.3)}
+#status{font-size:12.5px;color:rgba(255,255,255,.88);margin-top:3px}
+#progress{height:4px;background:rgba(255,255,255,.25);margin-top:8px;border-radius:2px;overflow:hidden;display:none}
+#progress div{height:100%;width:0;background:#fbbf24;transition:width .4s}
 .btn:disabled{opacity:.45}
 .bar{height:6px;background:var(--line);margin:8px 0;border-radius:3px;overflow:hidden}
 .bar div{height:100%;background:var(--accent);transition:width .3s}
 main{max-width:760px;margin:0 auto;padding:12px 16px}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom);z-index:5}
-nav button{flex:1;border:0;background:none;color:var(--ink2);padding:10px 0 12px;font:inherit;font-size:13px}
-nav button.on{color:var(--accent);font-weight:650}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 12px}
-.card h2{font-size:16px;margin:0 0 2px}
+nav button{flex:1;border:0;background:none;color:var(--ink2);padding:9px 0 11px;font:inherit;font-size:13px;position:relative}
+nav button.on{color:var(--accent);font-weight:700}
+nav button.on::before{content:"";position:absolute;top:0;left:22%;right:22%;height:3px;border-radius:0 0 3px 3px;background:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 15px;margin:0 0 14px;
+  box-shadow:0 1px 3px rgba(20,40,80,.07);border-top:4px solid var(--sec,var(--line))}
+.card h2{font-size:16.5px;margin:0 0 2px;color:var(--sec-ink,var(--ink))}
+.card.heli{--sec:var(--hc);--sec-ink:var(--hc)}
+.s-blue{--sec:#2563eb}.s-teal{--sec:#0d9488}.s-violet{--sec:#7c3aed}.s-green{--sec:#16a34a}
+.s-amber{--sec:#d97706}.s-slate{--sec:#64748b}.s-rose{--sec:#e11d48}.s-indigo{--sec:#4f46e5}
 .sub{color:var(--ink2);font-size:13px}
 .row{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 16px;margin-top:10px}
-.kv .k{font-size:12px;color:var(--ink2)} .kv .v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
-.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--ink2);margin:2px 4px 0 0}
-.pill.bad{color:var(--bad);border-color:var(--bad)} .pill.warn{color:var(--warn);border-color:var(--warn)} .pill.good{color:var(--good);border-color:var(--good)}
-.list .item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);cursor:pointer}
-.list .item:first-child{border-top:0}
-button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 12px;font:inherit}
-button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.kv .k{font-size:12px;color:var(--ink2)} .kv .v{font-size:16px;font-weight:650;font-variant-numeric:tabular-nums}
+.card.heli .grid .kv{background:color-mix(in srgb,var(--hc) calc(var(--tint)*60%),transparent);border-radius:10px;padding:7px 10px}
+.pill{display:inline-block;font-size:12px;font-weight:550;padding:2px 9px;border-radius:99px;color:var(--ink2);margin:3px 4px 0 0;
+  background:color-mix(in srgb,var(--ink2) var(--tint)%,transparent)}
+.pill.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) calc(var(--tint)*100%),transparent)}
+.pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) calc(var(--tint)*100%),transparent)}
+.pill.good{color:var(--good);background:color-mix(in srgb,var(--good) calc(var(--tint)*100%),transparent)}
+.list{padding:6px 10px}
+.list .item{display:flex;justify-content:space-between;gap:10px;padding:10px 8px 10px 12px;margin:6px 0;cursor:pointer;
+  border-radius:10px;border-left:5px solid var(--hc,var(--accent));background:color-mix(in srgb,var(--hc,var(--accent)) calc(var(--tint)*45%),transparent)}
+.list .item:active{filter:brightness(.96)}
+.list .item .hn{color:var(--hc,var(--ink));font-weight:700}
+button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 14px;font:inherit;font-weight:550}
+button.btn.primary{background:linear-gradient(120deg,var(--hdr1),var(--hdr2));border-color:transparent;color:#fff}
 button.btn.danger{color:var(--bad);border-color:var(--bad)}
 .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
@@ -59,11 +80,20 @@ canvas{width:100%;height:150px;display:block;touch-action:pan-y}
 .back{border:0;background:none;color:var(--accent);font:inherit;padding:4px 0 10px}
 .note{font-size:12.5px;color:var(--ink2);margin-top:8px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}
-.chip{border:1px solid var(--line);border-radius:99px;padding:4px 12px;background:none;color:var(--ink2);font:inherit;font-size:14px;cursor:pointer}
-.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip{--cc:var(--accent);border:1.5px solid color-mix(in srgb,var(--cc) 45%,var(--line));border-radius:99px;padding:5px 13px;
+  background:color-mix(in srgb,var(--cc) calc(var(--tint)*40%),transparent);color:var(--ink);font:inherit;font-size:14px;cursor:pointer}
+.chip.on{background:var(--cc);border-color:var(--cc);color:#fff;font-weight:650;box-shadow:0 1px 4px color-mix(in srgb,var(--cc) 45%,transparent)}
+.fsec{margin-top:10px}
+.fsec>.lbl{font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--lc,var(--ink2));margin-bottom:2px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 12px}
+.stat{border-radius:12px;padding:8px 10px;color:#fff;background:linear-gradient(135deg,var(--s1),var(--s2))}
+.stat .k{font-size:11px;opacity:.9;text-transform:uppercase;letter-spacing:.6px}
+.stat .v{font-size:18px;font-weight:750;font-variant-numeric:tabular-nums}
+.fdesc{font-size:12.5px;color:var(--ink2);margin:-4px 2px 10px}
 .frow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.ghead{font-size:13px;font-weight:650;color:var(--ink2);margin:14px 0 2px;display:flex;justify-content:space-between}
-.ghead:first-child{margin-top:0}
+.ghead{font-size:13px;font-weight:750;color:var(--gc,var(--ink2));margin:14px 2px 2px;display:flex;justify-content:space-between;
+  text-transform:uppercase;letter-spacing:.5px}
+.ghead:first-child{margin-top:4px}
 .linkbtn{border:0;background:none;color:var(--accent);font:inherit;font-size:14px;padding:6px 0;cursor:pointer}
 #con{font:12px/1.35 ui-monospace,Consolas,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;
   padding:8px;margin:10px 0;height:58vh;overflow:auto;white-space:pre-wrap;word-break:break-all}
@@ -140,6 +170,10 @@ function battText(s){const p=s&&s.power;if(!p||!(p.battery_mv>0))return "";
   return `battery ${(p.battery_mv/1000).toFixed(2)} V (~${battPct(p.battery_mv)}%)${p.low?" LOW":""}${c}`;}
 function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this phone":"WiFi";}
 function heliName(serial){return helis[serial]||("ECU "+serial);}
+// One colour per heli (by ECU serial, in sorted order), used on its chips, cards and list rows.
+const HELI_COLOURS=["#2563eb","#ea580c","#7c3aed","#0d9488","#db2777","#16a34a","#ca8a04","#0891b2"];
+function heliColour(serial){const all=[...new Set(flights.map(f=>f.serial))].sort();
+  const i=all.indexOf(serial);return HELI_COLOURS[(i<0?0:i)%HELI_COLOURS.length];}
 function flightTime(f){
   const lr=f.last_run||{};
   if(lr.ignition_at) return {date:new Date(lr.ignition_at),exact:true};
@@ -389,7 +423,7 @@ function fleetView(){
   if(!serials.length) return `<div class="card empty">No flights yet.<br>Plug the logger into an ECU after a flight.</div>`;
   return serials.map(s=>{
     const list=g[s], last=list[list.length-1], missed=missedFlights(list), flags=flagsFor(last,list);
-    return `<div class="card" onclick="openFlight('${esc(last.key)}')" style="cursor:pointer">
+    return `<div class="card heli" onclick="openFlight('${esc(last.key)}')" style="cursor:pointer;--hc:${heliColour(s)}">
       <div class="row"><h2>${esc(heliName(s))}</h2><span class="sub">${last.turbine_type?esc(last.turbine_type)+" · ":""}ECU ${esc(s)}</span></div>
       <div class="sub">Last flight ${esc(whenText(last))}</div>
       <div class="grid">
@@ -405,24 +439,28 @@ function fleetView(){
     </div>`;}).join("");
 }
 
-function chip(label,on,click){return `<button class="chip${on?" on":""}" onclick="${click}">${esc(label)}</button>`;}
+function chip(label,on,click,colour){return `<button class="chip${on?" on":""}"${colour?` style="--cc:${colour}"`:""} onclick="${click}">${esc(label)}</button>`;}
 function flightsView(){
   if(!flights.length) return `<div class="card empty">No flights stored.</div>`;
   const serials=Object.keys(bySerial());
   if(flt.heli!=="all"&&!serials.includes(flt.heli))flt.heli="all";
   const sel=(id,k,opts)=>`<select id="${id}" onchange="setF('${k}',this.value)">${opts.map(([v,l])=>`<option value="${v}"${flt[k]===v?" selected":""}>${esc(l)}</option>`).join("")}</select>`;
   const inp=(k,ph,type)=>`<input type="${type||"number"}" inputmode="decimal" placeholder="${esc(ph)}" value="${esc(flt[k])}" oninput="typeF('${k}',this.value)">`;
-  if(!flt.open) return `<div class="card"><div class="row"><div class="sub">Filters: <b>${esc(activeText())}</b></div>
+  if(!flt.open) return `<div class="card s-indigo"><div class="row"><div class="sub">Filters: <b>${esc(activeText())}</b></div>
       <button class="linkbtn" onclick="setF('open',true)">Show filters ▾</button></div>
       ${filterActive()?`<button class="linkbtn" onclick="clearFilters()">Clear filters</button>`:""}</div>
     <div id="flist">${flightListHtml()}</div>`;
-  return `<div class="card">
-    <div class="row"><div class="sub">Filters</div><button class="linkbtn" onclick="setF('open',false)">Hide filters ▴</button></div>
-    <div class="chips">${chip("All helis",flt.heli==="all","setF('heli','all')")}${serials.map(sr=>chip(heliName(sr),flt.heli===sr,`setF('heli','${esc(sr)}')`)).join("")}</div>
-    <div class="chips">${[["all","Any date"],["today","Today"],["7d","7 days"],["month","This month"],["custom","Custom…"]].map(([v,l])=>chip(l,flt.date===v,`setF('date','${v}')`)).join("")}</div>
-    ${flt.date==="custom"?`<div class="frow"><div><label>From</label>${inp("from","","date")}</div><div><label>To</label>${inp("to","","date")}</div></div>`:""}
-    <div class="chips">${[["all","Flights + ground runs"],["flights","Flights"],["ground","Ground runs"]].map(([v,l])=>chip(l,flt.type===v,`setF('type','${v}')`)).join("")}</div>
-    <div class="chips">${[["flagged","Trend flags"],["abnormal","Abnormal shutdown"],["failsafe","Failsafe"],["nolog","No log"]].map(([k,l])=>chip((flt.only[k]?"✓ ":"")+l,flt.only[k],`toggleOnly('${k}')`)).join("")}</div>
+  return `<div class="card s-indigo">
+    <div class="row"><h2 style="color:#4f46e5">Filters</h2><button class="linkbtn" onclick="setF('open',false)">Hide filters ▴</button></div>
+    <div class="fsec"><div class="lbl" style="--lc:var(--accent)">Heli</div>
+      <div class="chips">${chip("All helis",flt.heli==="all","setF('heli','all')","#475569")}${serials.map(sr=>chip(heliName(sr),flt.heli===sr,`setF('heli','${esc(sr)}')`,heliColour(sr))).join("")}</div></div>
+    <div class="fsec"><div class="lbl" style="--lc:var(--c-date)">When</div>
+      <div class="chips">${[["all","Any date"],["today","Today"],["7d","7 days"],["month","This month"],["custom","Custom…"]].map(([v,l])=>chip(l,flt.date===v,`setF('date','${v}')`,"var(--c-date)")).join("")}</div>
+    ${flt.date==="custom"?`<div class="frow"><div><label>From</label>${inp("from","","date")}</div><div><label>To</label>${inp("to","","date")}</div></div>`:""}</div>
+    <div class="fsec"><div class="lbl" style="--lc:var(--c-type)">Type</div>
+      <div class="chips">${[["all","Flights + ground runs"],["flights","Flights"],["ground","Ground runs"]].map(([v,l])=>chip(l,flt.type===v,`setF('type','${v}')`,"var(--c-type)")).join("")}</div></div>
+    <div class="fsec"><div class="lbl" style="--lc:var(--c-bad)">Show only</div>
+      <div class="chips">${[["flagged","Trend flags","var(--c-bad)"],["abnormal","Abnormal shutdown","var(--c-bad)"],["failsafe","Failsafe","var(--c-warn)"],["nolog","No log","var(--c-warn)"]].map(([k,l,c])=>chip((flt.only[k]?"✓ ":"")+l,flt.only[k],`toggleOnly('${k}')`,c)).join("")}</div></div>
     <label>Search</label><input type="search" placeholder="Heli, ECU serial, run number…" value="${esc(flt.q)}" oninput="typeF('q',this.value)">
     <div class="frow">
       <div><label>Sort</label>${sel("fsort","sort",[["newest","Newest first"],["longest","Longest run"],["egt","Highest max EGT"],["start","Slowest start"],["run","Heli, run number"]])}</div>
@@ -441,8 +479,8 @@ function flightsView(){
 }
 function flightItem(f,g){
   const flags=flagsFor(f,g[f.serial]);
-  return `<div class="item" onclick="openFlight('${esc(f.key)}')">
-      <div><div><b>${esc(heliName(f.serial))}</b> · run ${f.runs_ok}${flew(f)?"":` <span class="pill">ground run</span>`}</div>
+  return `<div class="item" style="--hc:${heliColour(f.serial)}" onclick="openFlight('${esc(f.key)}')">
+      <div><div><span class="hn">${esc(heliName(f.serial))}</span> · run ${f.runs_ok}${flew(f)?"":` <span class="pill">ground run</span>`}</div>
         <div class="sub">${esc(whenText(f))}</div>
         <div>${isAbnormal(f)?`<span class="pill bad">${esc(OFFS[f.off_condition]||"Off "+f.off_condition)}</span>`:""}
           ${hadFailsafe(f)?`<span class="pill warn">failsafe ×${f.failsafe_count}</span>`:""}
@@ -453,7 +491,12 @@ function flightItem(f,g){
 }
 function flightListHtml(){
   const list=filteredFlights(), g=bySerial();
-  const head=`<div class="sub" id="fsum" style="margin:0 2px 8px">${esc(summaryText(list))}</div>`;
+  const fl=list.filter(flew).length;
+  const head=`<div class="stats">
+      <div class="stat" style="--s1:#2563eb;--s2:#4f46e5"><div class="k">Shown</div><div class="v">${list.length} <span style="font-size:13px;opacity:.85">of ${flights.length}</span></div></div>
+      <div class="stat" style="--s1:#0d9488;--s2:#0891b2"><div class="k">Run time</div><div class="v">${hms(totalRun(list))}</div></div>
+      <div class="stat" style="--s1:#ea580c;--s2:#db2777"><div class="k">Flights</div><div class="v">${fl}${list.length-fl?` <span style="font-size:13px;opacity:.85">+${list.length-fl} gnd</span>`:""}</div></div>
+    </div><div class="fdesc" id="fsum">${esc(summaryText(list))}</div>`;
   const exp=list.length?`<div class="btns"><button class="btn" onclick="exportSummary(filteredFlights())">${list.length===1?"Export this flight":`Export ${list.length===flights.length?"all":"these"} ${list.length} flights`} (CSV)</button></div>`:"";
   if(!list.length)return head+`<div class="card empty">No flights match these filters.${filterActive()?` <button class="linkbtn" onclick="clearFilters()">Clear filters</button>`:""}</div>`;
   let body;
@@ -461,14 +504,14 @@ function flightListHtml(){
   else{
     const groups=new Map();
     for(const f of list){
-      let k,label;
-      if(flt.group==="heli"){k=f.serial;label=heliName(f.serial);}
+      let k,label,gc="";
+      if(flt.group==="heli"){k=f.serial;label=heliName(f.serial);gc=heliColour(f.serial);}
       else{const t=flightTime(f);k=t?t.date.getFullYear()*100+t.date.getMonth():-1;
         label=t?t.date.toLocaleDateString(undefined,{month:"long",year:"numeric"}):"Date unknown";}
-      if(!groups.has(k))groups.set(k,{label,items:[]});
+      if(!groups.has(k))groups.set(k,{label,gc,items:[]});
       groups.get(k).items.push(f);
     }
-    body=[...groups.values()].map(gr=>`<div class="ghead"><span>${esc(gr.label)}</span><span>${gr.items.length} · ${hms(totalRun(gr.items))}</span></div>`+
+    body=[...groups.values()].map(gr=>`<div class="ghead"${gr.gc?` style="--gc:${gr.gc}"`:""}><span>${esc(gr.label)}</span><span>${gr.items.length} · ${hms(totalRun(gr.items))}</span></div>`+
       gr.items.map(f=>flightItem(f,g)).join("")).join("");
   }
   return head+`<div class="card list">${body}</div>${exp}`;
@@ -482,7 +525,7 @@ async function showFlight(key){
   const lr=f.last_run, list=bySerial()[f.serial], flags=flagsFor(f,list);
   const sess=f.session_values_valid;
   $("#view").innerHTML=`<button class="back" onclick="closeFlight()">‹ All flights</button>
-  <div class="card">
+  <div class="card heli" style="--hc:${heliColour(f.serial)}">
     <div class="row"><h2>${esc(heliName(f.serial))} · run ${f.runs_ok}</h2><span class="sub">ECU ${esc(f.serial)}</span></div>
     <div class="sub">${esc(whenText(f))}${f.time_source==="back_calculated"?"":" · times not available for this download"}</div>
     <div>${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}</div>
@@ -502,7 +545,7 @@ async function showFlight(key){
     </div>
     ${sess?"":`<div class="note">Shutdown reason and failsafes are only shown when the logger is plugged in before the ECU is switched off, because the ECU resets them at power-up.</div>`}
   </div>
-  <div class="card" id="charts"><div class="sub">Loading log…</div></div>
+  <div class="card s-teal" id="charts"><div class="sub">Loading log…</div></div>
   <div class="card"><div class="btns">
     <button class="btn" onclick="exportFlight('${esc(key)}')">Export log (CSV)</button>
     <button class="btn danger" onclick="deleteFlight('${esc(key)}')">Delete</button></div></div>`;
@@ -563,15 +606,15 @@ function trendsView(){
   const pickSel=`<label for="ts">Heli</label>
     <select id="ts" onchange="trendSerial=this.value;if(flt.heli!=='all'){flt.heli=this.value;saveFilter();}render()">${serials.map(s=>`<option value="${esc(s)}"${s===trendSerial?" selected":""}>${esc(heliName(s))}</option>`).join("")}</select>
     ${dateText()?`<div class="note">Dates: <b>${esc(dateText())}</b> (set on the Flights tab). <button class="linkbtn" onclick="setF('date','all')">Show all dates</button></div>`:""}`;
-  if(!list.length) return `<div class="card">${pickSel}<div class="note">No flights for this heli in the chosen dates.</div></div>`;
-  if(list.length<2) return `<div class="card">${pickSel}
+  if(!list.length) return `<div class="card heli" style="--hc:${heliColour(trendSerial)}">${pickSel}<div class="note">No flights for this heli in the chosen dates.</div></div>`;
+  if(list.length<2) return `<div class="card heli" style="--hc:${heliColour(trendSerial)}">${pickSel}
     <div class="note">Flight-to-flight trends need two flights. Here is the one flight.</div>
     <div class="btns"><button class="btn" onclick="openFlight('${esc(list[0].key)}')">Open flight details</button></div></div>
     <div class="card" id="tf-charts"><div class="sub">Loading log…</div></div>`;
-  return `<div class="card">${pickSel}
+  return `<div class="card heli" style="--hc:${heliColour(trendSerial)}">${pickSel}
     <div class="note">${list.length} flight${list.length>1?"s":""} shown. The shaded band is the mean ± 2σ of the previous ${TREND_WINDOW} flights; circled points fall outside it.
     ${list.length<TREND_MIN+1?` Flags start once ${TREND_MIN+1} flights are shown.`:""}</div></div>
-    <div class="card">${METRICS.map(([key,label])=>chartBlock(label,"t-"+key)).join("")}
+    <div class="card s-teal">${METRICS.map(([key,label])=>chartBlock(label,"t-"+key)).join("")}
     <div class="note">X axis: the ECU's run count, so gaps show flights that were not downloaded. Ground runs (no time at flight throttle) appear in the start charts only. Tap a point to open that flight.</div></div>`;
 }
 function drawTrends(){
@@ -595,16 +638,16 @@ function drawTrends(){
 function settingsView(){
   const s=status||{}, serials=Object.keys(bySerial());
   const allSerials=[...new Set([...serials,...Object.keys(helis)])];
-  return `<div class="card"><h2>Heli names</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the heli.</div>
+  return `<div class="card s-violet"><h2>Heli names</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the heli.</div>
     ${allSerials.length?allSerials.map(sr=>`<label for="h-${esc(sr)}">ECU ${esc(sr)}</label>
       <div class="row"><input id="h-${esc(sr)}" value="${esc(helis[sr]||"")}" placeholder="e.g. BO 105" maxlength="40">
       <button class="btn" onclick="saveHeli('${esc(sr)}')">Save</button></div>`).join(""):`<div class="note">Names can be added once a flight has been downloaded.</div>`}
   </div>
   ${appCard()}
   ${updatesCard(s)}
-  ${s.via==="phone"?`<div class="card"><h2>Logger</h2><div class="sub">Not connected. These pages are showing the ${s.flights} flight${s.flights===1?"":"s"} kept on this phone.
+  ${s.via==="phone"?`<div class="card s-teal"><h2>Logger</h2><div class="sub">Not connected. These pages are showing the ${s.flights} flight${s.flights===1?"":"s"} kept on this phone.
     Plug the logger into an ECU, or press its button, and connect from the app's home screen.</div>
-    <div class="btns"><button class="btn" onclick="exportSummary()">Export all flights (CSV)</button></div></div>`:`<div class="card"><h2>Logger</h2>
+    <div class="btns"><button class="btn" onclick="exportSummary()">Export all flights (CSV)</button></div></div>`:`<div class="card s-teal"><h2>Logger</h2>
     <div class="grid">
       <div class="kv"><div class="k">Firmware</div><div class="v" style="font-size:14px">${esc(s.fw)} (${esc(s.running_partition)}, ${esc(s.ota_state)})</div></div>
       <div class="kv"><div class="k">Clock</div><div class="v" style="font-size:14px">${s.clock?esc(fmtDate(new Date(s.clock))):"not set"}${s.rtc?" · RTC":""}</div></div>
@@ -616,7 +659,7 @@ function settingsView(){
     <div class="btns"><button class="btn primary" onclick="downloadNow()">Download from ECU now</button>
       <button class="btn" onclick="exportSummary()">Export all flights (CSV)</button></div>
   </div>
-  <div class="card"><h2>Home WiFi</h2><div class="sub">For viewing in a browser at home and for firmware updates from PlatformIO.
+  <div class="card s-blue"><h2>Home WiFi</h2><div class="sub">For viewing in a browser at home and for firmware updates from PlatformIO.
     ${s.wifi&&s.wifi.connected?`Connected to ${esc(s.wifi.ssid)}, <b>http://${esc(s.wifi.ip)}</b>`:s.wifi&&s.wifi.ssid?`Saved: ${esc(s.wifi.ssid)} (not connected)`:"Not set."}</div>
     <label for="ws">Network name</label><input id="ws" value="${esc((s.wifi&&s.wifi.ssid)||"")}" autocomplete="off">
     <label for="wp">Password</label><input id="wp" type="password" autocomplete="off">
@@ -628,7 +671,7 @@ function settingsView(){
 function appCard(){
   if(!IN_APP)return "";
   let o={};try{o=JSON.parse(AndroidApp.oneDriveStatus());}catch(e){}
-  return `<div class="card"><h2>Phone app</h2><div class="sub">${esc(o.flights)} flight${o.flights===1?"":"s"} kept on this phone.
+  return `<div class="card s-indigo"><h2>Phone app</h2><div class="sub">${esc(o.flights)} flight${o.flights===1?"":"s"} kept on this phone.
     ${o.configured?(o.signedIn?`OneDrive: signed in${o.account?" as "+esc(o.account):""}. ${o.pending?esc(o.pending)+" file(s) waiting to upload.":"Everything uploaded."}${o.lastUpload?" Last upload "+esc(o.lastUpload)+".":""}${o.error?"<br>Last problem: "+esc(o.error):""}`
       :"OneDrive: not signed in. Flights are kept on the phone; sign in to copy them to OneDrive."):"OneDrive upload is not set up in this build of the app."}</div>
     <div class="btns">${o.configured?(o.signedIn?`<button class="btn" onclick="AndroidApp.oneDriveUploadNow()">Upload now</button><button class="btn" onclick="if(confirm('Sign out of OneDrive?'))AndroidApp.oneDriveSignOut()">Sign out</button>`
@@ -671,7 +714,7 @@ function updatesCard(s){
   }else{
     fw=`<div class="note">Connect to the logger to update its firmware from here.</div>`;
   }
-  return `<div class="card"><h2>Updates</h2><div class="sub">App version <b>${esc(appV)}</b>.</div>
+  return `<div class="card s-green"><h2>Updates</h2><div class="sub">App version <b>${esc(appV)}</b>.</div>
     <div class="btns"><button class="btn" onclick="AndroidApp.checkAppUpdate()">Check for app update</button></div>${fw}</div>`;
 }
 function installFw(tag,ver){
@@ -687,7 +730,7 @@ function installFw(tag,ver){
 // /api/console?since=N, where N counts every byte the logger has printed since boot.
 let conText="", conNext=0, conBusy=false;
 function consoleView(){
-  return `<div class="card"><h2>Console</h2>
+  return `<div class="card s-slate"><h2>Console</h2>
     <div class="sub">Live output from the logger. Commands work as on the USB serial monitor; type <b>help</b> for the list.</div>
     <pre id="con"></pre>
     <div class="row"><input id="cmd" placeholder="command, e.g. status" maxlength="120" autocomplete="off"
