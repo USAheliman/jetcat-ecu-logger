@@ -1,4 +1,7 @@
-# Release: Actions > Release > Run workflow, type the version (e.g. 1.0.0) and the notes.
+# Release, either way:
+#   - Actions > Release > Run workflow, type the version (e.g. 1.0.0) and the notes; or
+#   - push an annotated tag v<version> (e.g. v1.0.1); its message becomes the notes.
+#     Claude releases this way once Mehul has confirmed the changes work.
 # Builds the logger firmware for both boards and the Android app, all stamped with that
 # version, and publishes GitHub release v<version>:
 #   JetCatLogger.apk, firmware-xiao_plus.bin, firmware-devkitc.bin, release.json
@@ -7,6 +10,8 @@
 name: Release
 
 on:
+  push:
+    tags: [ "v*.*.*" ]
   workflow_dispatch:
     inputs:
       version:
@@ -22,13 +27,27 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ inputs.version }}
     steps:
+      - name: Version and notes (from the form, or from the pushed tag)
+        env:
+          IN_VERSION: ${{ inputs.version }}
+          IN_NOTES: ${{ inputs.notes }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then V="${GITHUB_REF_NAME#v}"; else V="$IN_VERSION"; fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          printf '%s' "$IN_NOTES" > "$RUNNER_TEMP/notes.txt"
       - name: Check the version number
         run: |
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Version must look like 1.0.0"; exit 1; }
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Notes from the tag message
+        if: github.event_name == 'push'
+        run: |
+          git fetch --force --tags -q
+          git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)' | sed '/-----BEGIN PGP/,$d' > "$RUNNER_TEMP/notes.txt"
+          [ -s "$RUNNER_TEMP/notes.txt" ] || echo "Release $VERSION" > "$RUNNER_TEMP/notes.txt"
+          cat "$RUNNER_TEMP/notes.txt"
       - name: Not already released
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
@@ -79,9 +98,8 @@ jobs:
           printf '{"version":"%s","app_version_code":%s,"commit":"%s"}\n' "$VERSION" "$CODE" "${GITHUB_SHA::7}" > "$GITHUB_WORKSPACE/out/release.json"
           cat "$GITHUB_WORKSPACE/out/release.json"
 
-      - name: Publish v${{ inputs.version }}
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          NOTES: ${{ inputs.notes }}
         run: |
-          gh release create "v$VERSION" out/* --title "JetCat Logger $VERSION" --notes "$NOTES" --target "$GITHUB_SHA" --latest
+          gh release create "v$VERSION" out/* --title "JetCat Logger $VERSION" --notes-file "$RUNNER_TEMP/notes.txt" --target "$GITHUB_SHA" --latest

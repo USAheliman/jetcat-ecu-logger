@@ -20,8 +20,10 @@ is this app.
 
 ## Getting the app, and updates
 
-**Releases.** Mehul publishes a release with GitHub's **Actions > Release > Run workflow**,
-typing the version (e.g. `1.0.0`) and the notes. That builds the app and the logger firmware
+**Releases.** A release is made either with GitHub's **Actions > Release > Run workflow**
+(typing the version, e.g. `1.0.0`, and the notes), or by pushing an annotated tag such as
+`v1.0.1` whose message is the notes (how Claude releases, once Mehul has confirmed the
+changes work). That builds the app and the logger firmware
 for both boards, all stamped with that version, and publishes release `v1.0.0` with
 `JetCatLogger.apk`, `firmware-xiao_plus.bin`, `firmware-devkitc.bin` and `release.json`.
 Version numbers are only set there; every other build is `dev`.
