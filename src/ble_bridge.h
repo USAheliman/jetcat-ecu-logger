@@ -241,6 +241,10 @@ class BleServerCallbacks : public NimBLEServerCallbacks {
 inline void bleInitOnce(const char* name) {
     if (bleInited) return;
     NimBLEDevice::init(name);
+    // Transmit power: the Arduino core's default is +9 dBm (CONFIG_BT_CTRL_DFT_TX_POWER_LEVEL_P9);
+    // the ESP32-S3 goes to +21. +18 dBm gives roughly 2.5x the range so the logger can still be
+    // reached inside its case and the model. Still below the +20 dBm WiFi already uses.
+    NimBLEDevice::setPower(18);
     NimBLEDevice::setMTU(517);
     NimBLEServer* srv = NimBLEDevice::createServer();
     srv->setCallbacks(new BleServerCallbacks());
