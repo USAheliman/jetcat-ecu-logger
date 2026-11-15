@@ -26,6 +26,7 @@ header h1{font-size:17px;margin:0;font-weight:650}
 #status{font-size:12.5px;color:var(--ink2);margin-top:2px}
 #progress{height:3px;background:var(--line);margin-top:8px;border-radius:2px;overflow:hidden;display:none}
 #progress div{height:100%;width:0;background:var(--accent);transition:width .4s}
+.btn:disabled{opacity:.45}
 .bar{height:6px;background:var(--line);margin:8px 0;border-radius:3px;overflow:hidden}
 .bar div{height:100%;background:var(--accent);transition:width .3s}
 main{max-width:760px;margin:0 auto;padding:12px 16px}
@@ -436,6 +437,7 @@ function settingsView(){
       <button class="btn" onclick="saveHeli('${esc(sr)}')">Save</button></div>`).join(""):`<div class="note">Names can be added once a flight has been downloaded.</div>`}
   </div>
   ${appCard()}
+  ${updatesCard(s)}
   ${s.via==="phone"?`<div class="card"><h2>Logger</h2><div class="sub">Not connected. These pages are showing the ${s.flights} flight${s.flights===1?"":"s"} kept on this phone.
     Plug the logger into an ECU, or press its button, and connect from the app's home screen.</div>
     <div class="btns"><button class="btn" onclick="exportSummary()">Export all flights (CSV)</button></div></div>`:`<div class="card"><h2>Logger</h2>
@@ -468,6 +470,52 @@ function appCard(){
     <div class="btns">${o.configured?(o.signedIn?`<button class="btn" onclick="AndroidApp.oneDriveUploadNow()">Upload now</button><button class="btn" onclick="if(confirm('Sign out of OneDrive?'))AndroidApp.oneDriveSignOut()">Sign out</button>`
       :`<button class="btn primary" onclick="AndroidApp.oneDriveSignIn()">Sign in to OneDrive</button>`):""}
       <button class="btn" onclick="AndroidApp.home()">Loggers…</button></div></div>`;
+}
+
+// ---------------------------------------------------------------- updates (phone app only)
+// The app and the logger firmware are published as GitHub releases (Mehul runs the
+// "Release" action with a version number). The app fetches the list with the phone's
+// internet and sends a chosen firmware to the logger over Bluetooth (Malcolm's RXV2 flow).
+let fwRel=null, fwProg=null;
+window.__fwReleases=function(r){fwRel=r;if(tab==="settings")render();};
+window.__fwProgress=function(p){fwProg=p;window.__fwBusy=!!p&&(p.phase==="download"||p.phase==="send"||p.phase==="finish");
+  const el=$("#fwprog");
+  if(el&&tab==="settings"){el.innerHTML=fwProgHtml();}else if(tab==="settings")render();};
+function fwProgHtml(){const p=fwProg;if(!p)return "";
+  const pct=p.total?Math.round(p.done/p.total*100):0;
+  return `<div class="note"><b>${esc(p.msg||"")}</b></div>${p.phase==="download"||p.phase==="send"?`<div class="bar"><div style="width:${pct}%"></div></div>`:""}`;}
+function updatesCard(s){
+  if(!IN_APP)return "";
+  let appV="?";try{appV=AndroidApp.appVersion();}catch(e){}
+  const ble=s.via==="ble", board=s.board||"";
+  let fw="";
+  if(ble){
+    fw=`<h2 style="margin-top:14px">Logger firmware</h2><div class="sub">Running <b>${esc(s.fw||"?")}</b>${board?" ("+esc(board)+")":""}.</div>
+    <div id="fwprog">${fwProgHtml()}</div>`;
+    if(!board)fw+=`<div class="note">This logger's firmware is older than the update feature: install it once with PlatformIO, then updates work from here.</div>`;
+    else if(fwRel&&fwRel.error)fw+=`<div class="note">Could not get the release list: ${esc(fwRel.error)}</div>`;
+    else if(fwRel&&fwRel.releases){
+      fw+=fwRel.releases.length?fwRel.releases.map(r=>{
+        const has=r.boards.includes(board), here=r.version===s.fw;
+        return `<div class="kv" style="margin:8px 0"><div class="k">${esc(r.version)} · ${esc(r.date)}${here?" · running now":""}</div>
+          <div class="note" style="white-space:pre-wrap">${esc(r.notes||"")}</div>
+          ${has?`<button class="btn${here?"":" primary"}" ${window.__fwBusy?"disabled":""} onclick="installFw('${esc(r.tag)}','${esc(r.version)}')">${here?"Install again":"Install "+esc(r.version)}</button>`
+               :`<div class="note">No firmware for this board in this release.</div>`}</div>`;}).join("")
+        :`<div class="note">No releases published yet.</div>`;
+    }else if(fwRel)fw+=`<div class="note">Checking…</div>`;
+    if(board)fw+=`<div class="btns"><button class="btn" ${window.__fwBusy?"disabled":""} onclick="fwRel={};render();AndroidApp.firmwareReleases()">${fwRel?"Check again":"Check for firmware updates"}</button></div>`;
+  }else{
+    fw=`<div class="note">Connect to the logger to update its firmware from here.</div>`;
+  }
+  return `<div class="card"><h2>Updates</h2><div class="sub">App version <b>${esc(appV)}</b>.</div>
+    <div class="btns"><button class="btn" onclick="AndroidApp.checkAppUpdate()">Check for app update</button></div>${fw}</div>`;
+}
+function installFw(tag,ver){
+  const s=status||{};
+  if(s.downloading){alert("The logger is downloading from the ECU - wait for it to finish.");return;}
+  if(!confirm(`Install firmware ${ver} on the logger?\n\nIt takes about a minute. Keep the phone next to the logger and this screen open. The logger restarts at the end; then tap it in the list to reconnect.`))return;
+  fwProg={phase:"download",msg:"Starting…",done:0,total:0};window.__fwBusy=true;render();
+  AndroidApp.installFirmware(tag,s.board||"");
 }
 
 // ---------------------------------------------------------------- console
