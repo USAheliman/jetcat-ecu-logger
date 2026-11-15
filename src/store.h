@@ -27,4 +27,15 @@ bool validKey(const String& key);
 // Heli names: ECU serial -> name, kept in /config/helis.txt as "serial=name" lines.
 String helisJson();                                  // {"3934":"BO 105", ...}
 bool setHeliName(const String& serial, const String& name);   // empty name = remove
+
+// Per-heli service details and photo (Fleet page). Service: engine hours (ECU total run time)
+// at the last service, its date and an optional service interval, kept in
+// /config/heli_<serial>.txt as "key=value" lines. Photo: a small JPEG, kept base64-encoded in
+// /photos/<serial>.b64 (sent to the pages as text, which works the same over WiFi and Bluetooth).
+bool validSerial(const String& serial);
+String heliInfoJson();     // {"3934":{"service_h":44.0,"service_date":"2026-11-01","interval_h":25,"photo_len":27000},...}
+bool setHeliInfo(const String& serial, const String& serviceH, const String& serviceDate, const String& intervalH);
+String photoPath(const String& serial);
+bool photoChunk(const String& serial, int idx, int total, const String& b64);   // idx 0 starts a new photo
+bool removePhoto(const String& serial);
 }  // namespace store

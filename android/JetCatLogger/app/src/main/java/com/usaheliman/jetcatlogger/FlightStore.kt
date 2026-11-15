@@ -18,6 +18,11 @@ import java.io.File
 class FlightStore(context: Context) {
     private val dir = File(context.filesDir, "flights").apply { mkdirs() }
     private val helisFile = File(context.filesDir, "helis.json")
+    // Copies of the logger's per-heli service details and photos (Fleet page), for viewing
+    // with the logger off. The logger is the master copy.
+    private val heliInfoFile = File(context.filesDir, "heliinfo.json")
+    private val photoDir = File(context.filesDir, "photos").apply { mkdirs() }
+    private fun safeSerial(s: String) = s.isNotEmpty() && s.length <= 10 && s.all { it.isDigit() }
 
     /** Flight keys are "<serial>-<runs>", digits and a dash; anything else is refused. */
     private fun safeKey(key: String) = key.isNotEmpty() && key.length <= 32 &&
@@ -77,6 +82,25 @@ class FlightStore(context: Context) {
         h.keys().forEach { k -> merged.put(k, h.get(k)) }
         writeAtomically(helisFile, merged.toString(1).toByteArray())
     }
+
+    @Synchronized fun heliInfo(): JSONObject =
+        runCatching { JSONObject(heliInfoFile.readText()) }.getOrElse { JSONObject() }
+    @Synchronized fun putHeliInfo(o: JSONObject) {
+        writeAtomically(heliInfoFile, o.toString(1).toByteArray())
+        // drop photos the logger no longer has
+        photoDir.listFiles()?.forEach { f ->
+            val serial = f.name.removeSuffix(".b64")
+            if ((o.optJSONObject(serial)?.optLong("photo_len", 0) ?: 0L) <= 0L) f.delete()
+        }
+    }
+    /** The photo as the logger sends it (base64 text), or null. */
+    @Synchronized fun photo(serial: String): ByteArray? =
+        if (safeSerial(serial)) File(photoDir, "$serial.b64").takeIf { it.isFile }?.readBytes() else null
+    @Synchronized fun putPhoto(serial: String, b64: ByteArray) {
+        if (safeSerial(serial) && b64.isNotEmpty()) writeAtomically(File(photoDir, "$serial.b64"), b64)
+    }
+    @Synchronized fun photoLen(serial: String): Long =
+        if (safeSerial(serial)) File(photoDir, "$serial.b64").let { if (it.isFile) it.length() else 0L } else 0L
 
     private fun writeAtomically(f: File, bytes: ByteArray) {
         val tmp = File(f.parentFile, f.name + ".tmp")

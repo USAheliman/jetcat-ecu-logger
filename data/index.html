@@ -66,6 +66,7 @@ nav button.on::before{content:"";position:absolute;top:0;left:22%;right:22%;heig
 .list .item:active{filter:brightness(.96)}
 .list .item .hn{color:var(--hc,var(--ink));font-weight:700}
 button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 14px;font:inherit;font-weight:550}
+label.btn{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 14px;font-weight:550}
 button.btn.primary{background:linear-gradient(120deg,var(--hdr1),var(--hdr2));border-color:transparent;color:#fff}
 button.btn.danger{color:var(--bad);border-color:var(--bad)}
 .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
@@ -90,6 +91,22 @@ canvas{width:100%;height:150px;display:block;touch-action:pan-y}
 .stat .k{font-size:11px;opacity:.9;text-transform:uppercase;letter-spacing:.6px}
 .stat .v{font-size:18px;font-weight:750;font-variant-numeric:tabular-nums}
 .fdesc{font-size:12.5px;color:var(--ink2);margin:-4px 2px 10px}
+.hphoto{margin:-13px -15px 10px;aspect-ratio:16/9;background:center/cover no-repeat;border-radius:10px 10px 0 0;position:relative}
+.hphoto.ph{display:flex;align-items:center;justify-content:center;flex-direction:column;
+  background:linear-gradient(135deg,var(--hc),color-mix(in srgb,var(--hc) 55%,#000));color:#fff}
+.hphoto.ph .ini{font-size:54px;font-weight:800;line-height:1;opacity:.9}
+.hphoto.ph .hint{font-size:12.5px;opacity:.85;margin-top:6px}
+.hphoto .tag{position:absolute;left:10px;bottom:10px;background:rgba(0,0,0,.55);color:#fff;font-weight:700;
+  font-size:15px;padding:3px 10px;border-radius:8px}
+.svc{margin-top:10px;padding:9px 11px;border-radius:10px;background:color-mix(in srgb,var(--svc,var(--good)) calc(var(--tint)*90%),transparent)}
+.svc .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.svc .big{font-size:18px;font-weight:750;color:var(--svc,var(--good));font-variant-numeric:tabular-nums}
+.svc .bar{height:7px;margin:7px 0 2px;background:color-mix(in srgb,var(--ink2) 22%,transparent)}
+.svc .bar div{background:var(--svc,var(--good))}
+.hedit{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
+.hedit:first-of-type{border-top:0}
+.thumb{width:100%;max-width:320px;aspect-ratio:16/9;border-radius:10px;background:center/cover no-repeat var(--bg);
+  border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink2);font-size:13px}
 .frow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ghead{font-size:13px;font-weight:750;color:var(--gc,var(--ink2));margin:14px 2px 2px;display:flex;justify-content:space-between;
   text-transform:uppercase;letter-spacing:.5px}
@@ -144,6 +161,7 @@ const TREND_WINDOW=10, TREND_MIN=5;   // rolling mean ± 2σ of the previous 10 
 
 // ---------------------------------------------------------------- state
 let flights=[], helis={}, status=null, tab="fleet", detailKey=null, trendSerial=null;
+let heliInfo={}, photos={};   // service details + photo length per ECU serial; photo data URLs (with their length)
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -172,6 +190,16 @@ function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this pho
 function heliName(serial){return helis[serial]||("ECU "+serial);}
 // One colour per heli (by ECU serial, in sorted order), used on its chips, cards and list rows.
 const HELI_COLOURS=["#2563eb","#ea580c","#7c3aed","#0d9488","#db2777","#16a34a","#ca8a04","#0891b2"];
+// Service hours: engine total from the ECU (latest flight) minus the total at the last service.
+function engineHours(serial){const l=bySerial()[serial];return l&&l.length?l[l.length-1].total_run_time_s/3600:null;}
+function serviceInfo(serial){
+  const i=heliInfo[serial]||{}, tot=engineHours(serial);
+  if(i.service_h==null||tot==null)return null;
+  const since=Math.max(0,tot-i.service_h), iv=i.interval_h>0?i.interval_h:null;
+  const frac=iv?since/iv:null;
+  return {since,iv,frac,date:i.service_date,at:i.service_h,
+    colour:frac==null?"var(--good)":frac>=1?"var(--bad)":frac>=0.8?"var(--warn)":"var(--good)"};
+}
 function heliColour(serial){const all=[...new Set(flights.map(f=>f.serial))].sort();
   const i=all.indexOf(serial);return HELI_COLOURS[(i<0?0:i)%HELI_COLOURS.length];}
 function flightTime(f){
@@ -423,8 +451,12 @@ function fleetView(){
   if(!serials.length) return `<div class="card empty">No flights yet.<br>Plug the logger into an ECU after a flight.</div>`;
   return serials.map(s=>{
     const list=g[s], last=list[list.length-1], missed=missedFlights(list), flags=flagsFor(last,list);
+    const ph=photos[s], sv=serviceInfo(s), nm=heliName(s);
     return `<div class="card heli" onclick="openFlight('${esc(last.key)}')" style="cursor:pointer;--hc:${heliColour(s)}">
-      <div class="row"><h2>${esc(heliName(s))}</h2><span class="sub">${last.turbine_type?esc(last.turbine_type)+" · ":""}ECU ${esc(s)}</span></div>
+      ${ph?`<div class="hphoto" style="background-image:url('${ph.url}')"><span class="tag">${esc(nm)}</span></div>`
+          :`<div class="hphoto ph"><div class="ini">${esc((nm.match(/[A-Za-z0-9]/)||["?"])[0].toUpperCase())}</div>
+             <div class="hint">Add a photo in Settings › Helis</div></div>`}
+      <div class="row"><h2>${esc(nm)}</h2><span class="sub">${last.turbine_type?esc(last.turbine_type)+" · ":""}ECU ${esc(s)}</span></div>
       <div class="sub">Last flight ${esc(whenText(last))}</div>
       <div class="grid">
         <div class="kv"><div class="k">Last run</div><div class="v">${mmss(runSecs(last))}</div></div>
@@ -432,6 +464,11 @@ function fleetView(){
         <div class="kv"><div class="k">Engine total</div><div class="v">${hours(last.total_run_time_s)}</div></div>
         <div class="kv"><div class="k">Starts OK / failed</div><div class="v">${last.runs_ok} / ${last.starts_failed}</div></div>
       </div>
+      ${sv?`<div class="svc" style="--svc:${sv.colour}"><div class="top"><span class="k">Since last service</span>
+          <span class="big">${sv.since.toFixed(1)} h${sv.iv?` <span style="font-size:13px;font-weight:550">of ${sv.iv} h</span>`:""}</span></div>
+          ${sv.iv?`<div class="bar"><div style="width:${Math.min(100,sv.frac*100)}%"></div></div>`:""}
+          <div class="sub">${sv.frac>=1?"<b>Service due</b> · ":sv.frac>=0.8?"Service due soon · ":""}Serviced at ${sv.at.toFixed(1)} h${sv.date?" on "+esc(new Date(sv.date+"T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})):""}</div></div>`
+        :`<div class="svc" style="--svc:var(--ink2)" onclick="event.stopPropagation();tab='settings';render()"><div class="top"><span class="k">Since last service</span><span class="linkbtn">Set service hours ›</span></div></div>`}
       <div>${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}
         ${missed?`<span class="pill warn">${missed} flight${missed>1?"s":""} not captured</span>`:""}
         ${helis[s]?"":`<span class="pill">Tap Settings to name this heli</span>`}
@@ -638,10 +675,29 @@ function drawTrends(){
 function settingsView(){
   const s=status||{}, serials=Object.keys(bySerial());
   const allSerials=[...new Set([...serials,...Object.keys(helis)])];
-  return `<div class="card s-violet"><h2>Heli names</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the heli.</div>
-    ${allSerials.length?allSerials.map(sr=>`<label for="h-${esc(sr)}">ECU ${esc(sr)}</label>
+  const canEdit=s.via!=="phone";
+  return `<div class="card s-violet"><h2>Helis</h2><div class="sub">Each ECU is fixed to its turbine, so its serial number identifies the heli.
+    Name, photo and service hours are kept on the logger${IN_APP?" and copied to this phone":""}.</div>
+    ${allSerials.length?allSerials.map(sr=>{const i=heliInfo[sr]||{}, tot=engineHours(sr), ph=photos[sr];
+      return `<div class="hedit" style="--hc:${heliColour(sr)}">
+      <label for="h-${esc(sr)}" style="color:${heliColour(sr)};font-weight:700">ECU ${esc(sr)}${tot!=null?` · engine total ${tot.toFixed(1)} h`:""}</label>
       <div class="row"><input id="h-${esc(sr)}" value="${esc(helis[sr]||"")}" placeholder="e.g. BO 105" maxlength="40">
-      <button class="btn" onclick="saveHeli('${esc(sr)}')">Save</button></div>`).join(""):`<div class="note">Names can be added once a flight has been downloaded.</div>`}
+      <button class="btn" onclick="saveHeli('${esc(sr)}')">Save</button></div>
+      <label>Photo</label>
+      <div class="thumb" id="ph-${esc(sr)}" ${ph?`style="background-image:url('${ph.url}');border-style:solid"`:""}>${ph?"":"No photo"}</div>
+      ${canEdit?`<div class="btns"><label class="btn" style="margin:0;display:inline-block;color:var(--ink);font-size:15px;cursor:pointer">Choose photo…
+          <input type="file" accept="image/*" style="display:none" onchange="pickPhoto('${esc(sr)}',this)"></label>
+        ${ph?`<button class="btn danger" onclick="removePhoto('${esc(sr)}')">Remove photo</button>`:""}</div>`:""}
+      <label>Service</label>
+      <div class="frow">
+        <div><label for="sh-${esc(sr)}">Engine hours at last service</label><input id="sh-${esc(sr)}" type="number" step="0.1" min="0" inputmode="decimal" value="${i.service_h??""}" placeholder="e.g. 44.0"></div>
+        <div><label for="sd-${esc(sr)}">Service date</label><input id="sd-${esc(sr)}" type="date" value="${esc(i.service_date||"")}"></div>
+        <div><label for="si-${esc(sr)}">Service interval (h, optional)</label><input id="si-${esc(sr)}" type="number" step="0.5" min="0" inputmode="decimal" value="${i.interval_h??""}" placeholder="from the turbine manual"></div>
+      </div>
+      ${canEdit?`<div class="btns">${tot!=null?`<button class="btn" onclick="servicedNow('${esc(sr)}')">Serviced now (${tot.toFixed(1)} h, today)</button>`:""}
+        <button class="btn primary" onclick="saveService('${esc(sr)}')">Save service</button></div>`
+        :`<div class="note">Connect to the logger to change these.</div>`}
+    </div>`;}).join(""):`<div class="note">Helis appear here once a flight has been downloaded.</div>`}
   </div>
   ${appCard()}
   ${updatesCard(s)}
@@ -767,6 +823,58 @@ async function saveHeli(serial){
   try{helis=await post("/api/heli",{serial,name:$("#h-"+serial).value.trim()});toast("Saved");}
   catch(e){toast("Could not save: "+e.message);}
 }
+async function saveService(serial){
+  try{heliInfo=await post("/api/heliinfo",{serial,service_h:$("#sh-"+serial).value.trim(),
+      service_date:$("#sd-"+serial).value,interval_h:$("#si-"+serial).value.trim()});toast("Service details saved");render();}
+  catch(e){toast("Could not save: "+e.message);}
+}
+function servicedNow(serial){
+  const tot=engineHours(serial); if(tot==null)return;
+  $("#sh-"+serial).value=tot.toFixed(1);
+  const d=new Date();$("#sd-"+serial).value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  saveService(serial);
+}
+// Photo: shrunk on the phone/PC to 640x360 (cropped to fill), JPEG, then sent as base64 in
+// chunks - the fuel station's approach, sized for the Fleet card.
+function pickPhoto(serial,input){
+  const file=input.files&&input.files[0]; if(!file)return;
+  const img=new Image(), url=URL.createObjectURL(file);
+  img.onload=async()=>{
+    try{
+      const W=640,H=360,cv=document.createElement("canvas");cv.width=W;cv.height=H;
+      const c=cv.getContext("2d"), sc=Math.max(W/img.width,H/img.height), w=img.width*sc, h=img.height*sc;
+      c.drawImage(img,(W-w)/2,(H-h)/2,w,h);URL.revokeObjectURL(url);
+      const dataUrl=cv.toDataURL("image/jpeg",0.72), b64=dataUrl.split(",")[1];
+      const CH=6000, total=Math.ceil(b64.length/CH);
+      for(let i=0;i<total;i++){
+        toast(`Sending photo… ${Math.round(i/total*100)}%`);
+        await api(`/api/photo?serial=${encodeURIComponent(serial)}&chunk=${i}&total=${total}`,
+          {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify([b64.substring(i*CH,(i+1)*CH)])});
+      }
+      heliInfo=await api("/api/heliinfo.json");
+      photos[serial]={url:dataUrl,len:(heliInfo[serial]||{}).photo_len||b64.length};
+      toast("Photo saved");render();
+    }catch(e){toast("Could not save the photo: "+e.message);}
+  };
+  img.onerror=()=>toast("That file isn't a picture this browser can read");
+  img.src=url;
+}
+async function removePhoto(serial){
+  if(!confirm("Remove this heli's photo?"))return;
+  try{heliInfo=await post("/api/photo",{serial,delete:"1"});delete photos[serial];toast("Photo removed");render();}
+  catch(e){toast("Could not remove: "+e.message);}
+}
+// Fetch photos that are new or changed (photo_len differs from the copy in memory).
+async function loadPhotos(){
+  let changed=false;
+  for(const [serial,i] of Object.entries(heliInfo)){
+    if(!(i.photo_len>0)){if(photos[serial]){delete photos[serial];changed=true;}continue;}
+    if(photos[serial]&&photos[serial].len===i.photo_len)continue;
+    try{const t=await api("/api/photo?serial="+encodeURIComponent(serial));
+      photos[serial]={url:"data:image/jpeg;base64,"+String(t).trim(),len:i.photo_len};changed=true;}catch(e){}
+  }
+  if(changed&&(tab==="fleet"||tab==="settings"))render();
+}
 async function saveWifi(){
   try{await post("/api/wifi",{ssid:$("#ws").value.trim(),pass:$("#wp").value});toast("Saved - joining WiFi");}
   catch(e){toast("Could not save: "+e.message);}
@@ -807,8 +915,10 @@ function toast(msg){let t=$("#toast");if(!t){t=document.createElement("div");t.i
 
 // ---------------------------------------------------------------- loading + status polling
 async function loadFlights(){
-  [flights,helis]=await Promise.all([api("/api/flights.json"),api("/api/helis.json")]);
+  [flights,helis,heliInfo]=await Promise.all([api("/api/flights.json"),api("/api/helis.json"),
+    api("/api/heliinfo.json").catch(()=>({}))]);   // older firmware has no service/photo details
   render();
+  loadPhotos();
 }
 let wasDownloading=false;
 async function pollStatus(){

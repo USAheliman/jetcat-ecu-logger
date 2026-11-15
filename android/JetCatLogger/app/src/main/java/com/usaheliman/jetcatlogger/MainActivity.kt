@@ -49,6 +49,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
+    // Photo picker for <input type=file> on the pages (heli photos): a WebView needs this.
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private val pickFile = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { res ->
+        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res.resultCode, res.data))
+        fileCallback = null
+    }
     private val ORIGIN = "https://jetcat.logger"
     private lateinit var ble: LoggerBle
     private lateinit var store: FlightStore
@@ -248,6 +255,12 @@ class MainActivity : AppCompatActivity() {
         w.addJavascriptInterface(AppBridge(), "AndroidApp")
         // alert()/confirm() show nothing in a WebView without a WebChromeClient.
         w.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(v: WebView?, cb: ValueCallback<Array<Uri>>?, params: FileChooserParams?): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = cb
+                return try { pickFile.launch(params!!.createIntent()); true }
+                catch (e: Exception) { fileCallback = null; toast("No app to pick a photo with"); false }
+            }
             override fun onJsAlert(v: WebView?, url: String?, msg: String?, r: JsResult?): Boolean {
                 AlertDialog.Builder(this@MainActivity).setMessage(msg ?: "")
                     .setPositiveButton("OK") { _, _ -> r?.confirm() }.setOnCancelListener { r?.cancel() }.show(); return true
@@ -322,6 +335,12 @@ class MainActivity : AppCompatActivity() {
                         }
                         m == "GET" && path == "/api/flight.csv" ->
                             uri.getQueryParameter("key")?.let { store.putCsv(it, r.body) }
+                        m == "GET" && path == "/api/heliinfo.json" -> store.putHeliInfo(JSONObject(String(r.body)))
+                        m == "POST" && path == "/api/heliinfo" -> store.putHeliInfo(JSONObject(String(r.body)))
+                        m == "POST" && path == "/api/photo" && uri.getQueryParameter("delete") == "1" ->
+                            store.putHeliInfo(JSONObject(String(r.body)))
+                        m == "GET" && path == "/api/photo" ->
+                            uri.getQueryParameter("serial")?.let { store.putPhoto(it, r.body) }
                         else -> {}
                     }
                 }
@@ -336,6 +355,12 @@ class MainActivity : AppCompatActivity() {
         when {
             method == "GET" && path == "/api/flights.json" -> resolveJs(id, 200, j, json(store.allFlights()))
             method == "GET" && path == "/api/helis.json" -> resolveJs(id, 200, j, json(store.helis()))
+            method == "GET" && path == "/api/heliinfo.json" -> resolveJs(id, 200, j, json(store.heliInfo()))
+            method == "GET" && path == "/api/photo" -> {
+                val b = uri.getQueryParameter("serial")?.let { store.photo(it) }
+                if (b != null) resolveJs(id, 200, "text/plain", b)
+                else resolveJs(id, 404, j, json(JSONObject().put("error", "no photo on the phone")))
+            }
             method == "GET" && path == "/api/flight.csv" -> {
                 val csv = uri.getQueryParameter("key")?.let { store.csv(it) }
                 if (csv != null) resolveJs(id, 200, "text/csv", csv)
@@ -395,6 +420,20 @@ class MainActivity : AppCompatActivity() {
                 val arr = JSONArray(String(list.second))
                 keepFlights(arr)
                 bleSync("GET", "/api/helis.json")?.let { if (it.first == 200) store.putHelis(JSONObject(String(it.second))) }
+                // service details + photos (fetch a photo only when its size changed)
+                bleSync("GET", "/api/heliinfo.json")?.let { r ->
+                    if (r.first != 200) return@let
+                    val info = JSONObject(String(r.second))
+                    store.putHeliInfo(info)
+                    info.keys().forEach { serial ->
+                        val len = info.optJSONObject(serial)?.optLong("photo_len", 0) ?: 0L
+                        if (len > 0 && len != store.photoLen(serial) && connected) {
+                            bleSync("GET", "/api/photo?serial=" + Uri.encode(serial))?.let { p ->
+                                if (p.first == 200) store.putPhoto(serial, p.second)
+                            }
+                        }
+                    }
+                }
                 var copied = 0
                 for (i in 0 until arr.length()) {
                     if (!connected) break

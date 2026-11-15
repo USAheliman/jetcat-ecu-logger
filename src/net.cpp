@@ -225,6 +225,39 @@ static void hSetHeli() {
     sendJson(store::helisJson());
 }
 
+// Service details + photo per heli (Fleet page). Photos arrive as base64 text in chunks
+// (POST bodies of a few KB, so they also fit through the Bluetooth bridge).
+static void hHeliInfo() { sendJson(store::heliInfoJson()); }
+static void hSetHeliInfo() {
+    if (!store::setHeliInfo(g_router.arg("serial"), g_router.arg("service_h"),
+                            g_router.arg("service_date"), g_router.arg("interval_h"))) {
+        sendErr(400, "bad serial or value"); return;
+    }
+    sendJson(store::heliInfoJson());
+}
+static void hPhoto() {
+    String serial = g_router.arg("serial");
+    if (!store::validSerial(serial)) { sendErr(400, "bad serial"); return; }
+    String b64 = store::readText(store::photoPath(serial));
+    if (!b64.length()) { sendErr(404, "no photo"); return; }
+    g_router.send(200, "text/plain", b64);
+}
+static void hSetPhoto() {
+    String serial = g_router.arg("serial");
+    if (g_router.arg("delete") == "1") {
+        if (!store::removePhoto(serial)) { sendErr(400, "bad serial"); return; }
+        sendJson(store::heliInfoJson()); return;
+    }
+    // Body is ["<base64>"]: a JSON body, so the Bluetooth bridge doesn't read it as a form.
+    String body = g_router.body();
+    int q1 = body.indexOf('"'), q2 = body.lastIndexOf('"');
+    String b64 = (q1 >= 0 && q2 > q1) ? body.substring(q1 + 1, q2) : String();
+    if (!store::photoChunk(serial, g_router.arg("chunk").toInt(), g_router.arg("total").toInt(), b64)) {
+        sendErr(400, "bad photo chunk"); return;
+    }
+    sendJson("{\"ok\":true}");
+}
+
 static void hTime() {
     long e = g_router.arg("epoch").toInt();
     if (e < 1700000000L) { sendErr(400, "bad epoch"); return; }
@@ -403,6 +436,10 @@ void begin() {
     onRoute("/api/flight.raw", HTTP_GET, hFlightRaw);
     onRoute("/api/delete", HTTP_POST, hDelete);
     onRoute("/api/helis.json", HTTP_GET, hHelis);
+    onRoute("/api/heliinfo.json", HTTP_GET, hHeliInfo);
+    onRoute("/api/heliinfo", HTTP_POST, hSetHeliInfo);
+    onRoute("/api/photo", HTTP_GET, hPhoto);
+    onRoute("/api/photo", HTTP_POST, hSetPhoto);
     onRoute("/api/heli", HTTP_POST, hSetHeli);
     onRoute("/api/time", HTTP_POST, hTime);
     onRoute("/api/download", HTTP_POST, hDownload);
