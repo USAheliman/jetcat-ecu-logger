@@ -35,6 +35,7 @@ jobs:
         working-directory: android/JetCatLogger
         env: { KS_PW: "${{ secrets.APP_KEYSTORE_PASSWORD }}" }
         run: |
+          KS_PW=$(printf '%s' "$KS_PW" | tr -d '\r\n')   # a pasted secret can carry a line break
           EXTRA=""
           if [ -n "${{ vars.ONEDRIVE_CLIENT_ID }}" ]; then EXTRA="-PONEDRIVE_CLIENT_ID=${{ vars.ONEDRIVE_CLIENT_ID }}"; fi
           if [ "${{ steps.key.outputs.signed }}" = "true" ]; then
