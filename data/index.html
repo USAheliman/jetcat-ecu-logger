@@ -536,7 +536,8 @@ function flightListHtml(){
     </div><div class="fdesc" id="fsum">${esc(summaryText(list))}</div>`;
   const what=list.length===1?"this flight":`${list.length===flights.length?"all":"these"} ${list.length} flights`;
   const exp=list.length?`<div class="sub" style="margin-top:6px">Export ${what}:</div><div class="btns">
-    <button class="btn primary" onclick="exportLogs(filteredFlights())">Full logs, every second (CSV)</button>
+    <button class="btn primary" onclick="exportAnalysedLogs(filteredFlights())">Analysed logs with charts (Excel)</button>
+    <button class="btn" onclick="exportLogs(filteredFlights())">Full logs, every second (CSV)</button>
     <button class="btn" onclick="exportSummary(filteredFlights())">Summary, one line per flight (CSV)</button></div>`:"";
   if(!list.length)return head+`<div class="card empty">No flights match these filters.${filterActive()?` <button class="linkbtn" onclick="clearFilters()">Clear filters</button>`:""}</div>`;
   let body;
@@ -587,6 +588,7 @@ async function showFlight(key){
   </div>
   <div class="card s-teal" id="charts"><div class="sub">Loading log…</div></div>
   <div class="card"><div class="btns">
+    <button class="btn primary" onclick="exportFlightReport('${esc(key)}')">Flight report (Excel)</button>
     <button class="btn" onclick="exportFlight('${esc(key)}')">Export log (CSV)</button>
     <button class="btn danger" onclick="deleteFlight('${esc(key)}')">Delete</button></div></div>`;
   flightCharts($("#charts"),f,"c");
@@ -655,7 +657,9 @@ function trendsView(){
     <div class="note">${list.length} flight${list.length>1?"s":""} shown. The shaded band is the mean ± 2σ of the previous ${TREND_WINDOW} flights; circled points fall outside it.
     ${list.length<TREND_MIN+1?` Flags start once ${TREND_MIN+1} flights are shown.`:""}</div></div>
     <div class="card s-teal">${METRICS.map(([key,label])=>chartBlock(label,"t-"+key)).join("")}
-    <div class="note">X axis: the ECU's run count, so gaps show flights that were not downloaded. Ground runs (no time at flight throttle) appear in the start charts only. Tap a point to open that flight.</div></div>`;
+    <div class="note">X axis: the ECU's run count, so gaps show flights that were not downloaded. Ground runs (no time at flight throttle) appear in the start charts only. Tap a point to open that flight.</div></div>
+    <div class="card"><div class="btns"><button class="btn primary" onclick="exportTrends()">Trends workbook, all models (Excel)</button></div>
+    <div class="note">A sheet per model with every flight's measures, the usual range and the flags, and Excel charts.</div></div>`;
 }
 function drawTrends(){
   const list=trendList();
@@ -939,6 +943,471 @@ function exportSummary(only){
   }
   saveFile("jetcat-flights.csv",lines.join("\r\n"));
 }
+// ---------------------------------------------------------------- Excel (.xlsx) writer
+// A small Office Open XML (ECMA-376) writer, so the pages can hand over real Excel files
+// with native, editable charts and no library. A workbook is a zip of XML parts; the zip
+// is deflated with the browser's CompressionStream when it has one, otherwise stored.
+// Cells: number, string, null, or {v, s} with s a style name from XL_STYLE.
+const XL_STYLE={b:1,h:2,title:3,"2dp":4,"3dp":5,int:6,bad:7,good:8,note:9,sub:10,"1dp":11,dt:12,wrap:13,warn:14,big:15,k:16,mmss:17};
+const XL_STYLES_XML=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="4"><numFmt numFmtId="164" formatCode="d mmm yyyy hh:mm"/><numFmt numFmtId="165" formatCode="0.0"/><numFmt numFmtId="166" formatCode="0.000"/><numFmt numFmtId="167" formatCode="[m]:ss"/></numFmts>
+<fonts count="9">
+<font><sz val="11"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+<font><b/><sz val="18"/><color rgb="FF1E3A8A"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF991B1B"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF166534"/><name val="Calibri"/></font>
+<font><i/><sz val="10"/><color rgb="FF6B7280"/><name val="Calibri"/></font>
+<font><b/><sz val="13"/><color rgb="FF2563EB"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF92400E"/><name val="Calibri"/></font>
+</fonts>
+<fills count="7">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFDCFCE7"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="18">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="0" fontId="4" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="0" fontId="5" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="left"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="0" fontId="8" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
+<xf numFmtId="0" fontId="1" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left"/></xf>
+<xf numFmtId="0" fontId="6" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="167" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+const xlEsc=s=>String(s).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function xlCol(n){let s="";n++;while(n){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26);}return s;}   // 0 -> A
+function xlDate(d){return (d.getTime()-d.getTimezoneOffset()*60000)/86400000+25569;}          // local time as an Excel serial
+function xlSheetName(name,used){
+  let n=String(name).replace(/[\[\]:*?\/\\]/g," ").replace(/^'+|'+$/g,"").trim().slice(0,31)||"Sheet";
+  let k=n,i=2; while(used.has(k.toLowerCase())){const suf=" ("+(i++)+")";k=n.slice(0,31-suf.length)+suf;}
+  used.add(k.toLowerCase()); return k;
+}
+// A workbook: wb.sheet(name, {rows, widths, freeze, filter, merges, charts}) then await wb.bytes().
+// A chart: {title, x:{col,from,to,title,min,max}, y:{title,min,max,fmt}, series:[{name,col,colour,dash,markers,line}],
+//           at:{col,row,w,h}} - columns are 0-based indexes, rows 1-based sheet rows.
+class XlBook{
+  constructor(){this.sheets=[];this.used=new Set();}
+  sheet(name,o){const s={name:xlSheetName(name,this.used),...o};this.sheets.push(s);return s;}
+  sheetXml(s,hasDrawing){
+    const rows=s.rows||[];
+    let x=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`;
+    x+=`<sheetViews><sheetView workbookViewId="0"${s.grid===false?' showGridLines="0"':""}>`;
+    if(s.freeze) x+=`<pane ySplit="${s.freeze}" topLeftCell="A${s.freeze+1}" activePane="bottomLeft" state="frozen"/>`;
+    x+=`</sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>`;
+    if(s.widths&&s.widths.length) x+="<cols>"+s.widths.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")+"</cols>";
+    x+="<sheetData>";
+    const parts=[];
+    for(let r=0;r<rows.length;r++){
+      const row=rows[r]; if(!row||!row.length){continue;}
+      let cells="";
+      for(let c=0;c<row.length;c++){
+        let v=row[c], st=0; if(v==null) continue;
+        if(typeof v==="object"&&!(v instanceof Date)){st=XL_STYLE[v.s]||0;v=v.v;}
+        const ref=xlCol(c)+(r+1), sa=st?` s="${st}"`:"";
+        if(v==null||v===""){if(st)cells+=`<c r="${ref}"${sa}/>`;continue;}
+        if(v instanceof Date){cells+=`<c r="${ref}" s="${st||XL_STYLE.dt}"><v>${xlDate(v)}</v></c>`;}
+        else if(typeof v==="number"){if(isFinite(v))cells+=`<c r="${ref}"${sa}><v>${v}</v></c>`;}
+        else cells+=`<c r="${ref}" t="inlineStr"${sa}><is><t xml:space="preserve">${xlEsc(v)}</t></is></c>`;
+      }
+      const ht=s.heights&&s.heights[r]?` ht="${s.heights[r]}" customHeight="1"`:"";
+      parts.push(`<row r="${r+1}"${ht}>${cells}</row>`);
+    }
+    x+=parts.join("")+"</sheetData>";
+    if(s.filter&&rows.length) x+=`<autoFilter ref="A${s.filter}:${xlCol(rows[s.filter-1].length-1)}${rows.length}"/>`;
+    if(s.merges&&s.merges.length) x+=`<mergeCells count="${s.merges.length}">`+s.merges.map(m=>`<mergeCell ref="${m}"/>`).join("")+"</mergeCells>";
+    x+=`<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>`;
+    if(s.landscape) x+=`<pageSetup orientation="landscape" fitToHeight="0"/>`;
+    if(hasDrawing) x+=`<drawing r:id="rId1"/>`;
+    return x+"</worksheet>";
+  }
+  chartXml(s,ch){
+    // A series reads its x and y from a sheet: its own src, the chart's src, or the sheet the chart is on.
+    const num=v=>{if(v&&typeof v==="object"&&!(v instanceof Date))v=v.v;return typeof v==="number"&&isFinite(v)?v:null;};
+    const ref=(sh,col,a,b)=>"'"+sh.name.replace(/'/g,"''")+"'"+`!$${xlCol(col)}$${a}:$${xlCol(col)}$${b}`;
+    const data=(sh,col,a,b)=>{let pts="";for(let r=a;r<=b;r++){const v=num((sh.rows[r-1]||[])[col]);if(v!=null)pts+=`<c:pt idx="${r-a}"><c:v>${v}</c:v></c:pt>`;}
+      return `<c:numRef><c:f>${ref(sh,col,a,b)}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${b-a+1}"/>${pts}</c:numCache></c:numRef>`;};
+    const title=(t,sz)=>`<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="${sz}" b="${sz>1000?1:0}"/></a:pPr><a:r><a:rPr lang="en-GB" sz="${sz}" b="${sz>1000?1:0}"/><a:t>${xlEsc(t)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>`;
+    const X=ch.x;
+    const ser=ch.series.map((sr,i)=>{
+      const sh=sr.src||ch.src||s, xc=sr.xcol??X.col, a=sr.from??X.from, b=sr.to??X.to;
+      const col=(sr.colour||"2563EB").replace("#","").toUpperCase();
+      const ln=sr.line===false?`<a:ln><a:noFill/></a:ln>`:`<a:ln w="${sr.width||19050}" cap="rnd"><a:solidFill><a:srgbClr val="${col}"/></a:solidFill>${sr.dash?`<a:prstDash val="${sr.dash}"/>`:""}<a:round/></a:ln>`;
+      const mk=sr.markers?`<c:marker><c:symbol val="circle"/><c:size val="${sr.markerSize||6}"/><c:spPr><a:solidFill><a:srgbClr val="${(sr.markerColour||col).replace("#","")}"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr></c:marker>`:`<c:marker><c:symbol val="none"/></c:marker>`;
+      return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/><c:tx><c:v>${xlEsc(sr.name)}</c:v></c:tx><c:spPr>${ln}</c:spPr>${mk}`+
+        `<c:xVal>${data(sh,xc,a,b)}</c:xVal><c:yVal>${data(sh,sr.col,a,b)}</c:yVal><c:smooth val="0"/></c:ser>`;
+    }).join("");
+    const scal=a=>`<c:scaling><c:orientation val="minMax"/>${a&&a.max!=null?`<c:max val="${a.max}"/>`:""}${a&&a.min!=null?`<c:min val="${a.min}"/>`:""}</c:scaling>`;
+    const grid=`<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="E5E7EB"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>`;
+    const txt=`<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"/></a:pPr><a:endParaRPr lang="en-GB"/></a:p></c:txPr>`;
+    const axLine=`<c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="9CA3AF"/></a:solidFill></a:ln></c:spPr>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`+
+      `<c:roundedCorners val="0"/><c:chart>${title(ch.title,1300)}<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>`+
+      `<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>${ser}<c:axId val="5001"/><c:axId val="5002"/></c:scatterChart>`+
+      `<c:valAx><c:axId val="5001"/>${scal(X)}<c:delete val="0"/><c:axPos val="b"/>${X.title?title(X.title,900):""}<c:numFmt formatCode="${xlEsc(X.fmt||"General")}" sourceLinked="0"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="low"/>${axLine}${txt}<c:crossAx val="5002"/><c:crosses val="min"/><c:crossBetween val="midCat"/></c:valAx>`+
+      `<c:valAx><c:axId val="5002"/>${scal(ch.y)}<c:delete val="0"/><c:axPos val="l"/>${grid}${ch.y&&ch.y.title?title(ch.y.title,900):""}<c:numFmt formatCode="${xlEsc((ch.y&&ch.y.fmt)||"General")}" sourceLinked="0"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="low"/>${axLine}${txt}<c:crossAx val="5001"/><c:crosses val="min"/><c:crossBetween val="midCat"/></c:valAx>`+
+      `<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr></c:plotArea>`+
+      `<c:legend><c:legendPos val="b"/><c:overlay val="0"/>${txt}</c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>`+
+      `<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="D1D5DB"/></a:solidFill></a:ln></c:spPr></c:chartSpace>`;
+  }
+  drawingXml(charts,firstChart){
+    const A=(c,r)=>`<xdr:col>${c}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${r}</xdr:row><xdr:rowOff>0</xdr:rowOff>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">`+
+      charts.map((ch,i)=>{const at=ch.at;return `<xdr:twoCellAnchor editAs="oneCell"><xdr:from>${A(at.col,at.row-1)}</xdr:from><xdr:to>${A(at.col+at.w,at.row-1+at.h)}</xdr:to>`+
+        `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i+2}" name="Chart ${i+1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>`+
+        `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">`+
+        `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId${i+1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`;}).join("")+
+      `</xdr:wsDr>`;
+  }
+  files(){
+    const R="http://schemas.openxmlformats.org/officeDocument/2006/relationships", P="http://schemas.openxmlformats.org/package/2006/relationships";
+    const out=[], ov=[];
+    let chartN=0, drawN=0;
+    this.sheets.forEach((s,i)=>{
+      const n=i+1, charts=(s.charts||[]).filter(c=>c.series&&c.series.length);
+      ov.push(`<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
+      out.push([`xl/worksheets/sheet${n}.xml`,this.sheetXml(s,charts.length>0)]);
+      if(!charts.length) return;
+      const d=++drawN;
+      out.push([`xl/worksheets/_rels/sheet${n}.xml.rels`,`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${P}"><Relationship Id="rId1" Type="${R}/drawing" Target="../drawings/drawing${d}.xml"/></Relationships>`]);
+      out.push([`xl/drawings/drawing${d}.xml`,this.drawingXml(charts)]);
+      ov.push(`<Override PartName="/xl/drawings/drawing${d}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`);
+      const rels=charts.map((ch,k)=>{const c=++chartN;
+        out.push([`xl/charts/chart${c}.xml`,this.chartXml(s,ch)]);
+        ov.push(`<Override PartName="/xl/charts/chart${c}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`);
+        return `<Relationship Id="rId${k+1}" Type="${R}/chart" Target="../charts/chart${c}.xml"/>`;}).join("");
+      out.push([`xl/drawings/_rels/drawing${d}.xml.rels`,`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${P}">${rels}</Relationships>`]);
+    });
+    const now=new Date().toISOString().replace(/\.\d+Z$/,"Z");
+    out.unshift(
+      ["[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>${ov.join("")}</Types>`],
+      ["_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${P}"><Relationship Id="rId1" Type="${R}/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="${R}/extended-properties" Target="docProps/app.xml"/></Relationships>`],
+      ["docProps/core.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xlEsc(this.title||"JetCat Logger")}</dc:title><dc:creator>JetCat Logger</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`],
+      ["docProps/app.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>JetCat Logger</Application></Properties>`],
+      ["xl/workbook.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${R}"><bookViews><workbookView/></bookViews><sheets>${this.sheets.map((s,i)=>`<sheet name="${xlEsc(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets></workbook>`],
+      ["xl/_rels/workbook.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${P}">${this.sheets.map((s,i)=>`<Relationship Id="rId${i+1}" Type="${R}/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${this.sheets.length+1}" Type="${R}/styles" Target="styles.xml"/></Relationships>`],
+      ["xl/styles.xml",XL_STYLES_XML]);
+    return out;
+  }
+  async bytes(){return xlZip(this.files());}
+}
+const XL_CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function xlCrc(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=XL_CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+async function xlDeflate(b){
+  if(typeof CompressionStream==="undefined") return null;
+  try{const s=new Blob([b]).stream().pipeThrough(new CompressionStream("deflate-raw"));return new Uint8Array(await new Response(s).arrayBuffer());}
+  catch(e){return null;}
+}
+async function xlZip(files){
+  const enc=new TextEncoder(), chunks=[], central=[]; let off=0;
+  const d=new Date(), dosT=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1), dosD=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+  for(const [name,text] of files){
+    const raw=enc.encode(text), nm=enc.encode(name), crc=xlCrc(raw);
+    let data=await xlDeflate(raw), method=8; if(!data||data.length>=raw.length){data=raw;method=0;}
+    const h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(8,method,true);
+    h.setUint16(10,dosT,true);h.setUint16(12,dosD,true);h.setUint32(14,crc,true);h.setUint32(18,data.length,true);h.setUint32(22,raw.length,true);
+    h.setUint16(26,nm.length,true);h.setUint16(28,0,true);
+    chunks.push(new Uint8Array(h.buffer),nm,data);
+    const c=new DataView(new ArrayBuffer(46));
+    c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(10,method,true);
+    c.setUint16(12,dosT,true);c.setUint16(14,dosD,true);c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,raw.length,true);
+    c.setUint16(28,nm.length,true);c.setUint32(42,off,true);
+    central.push(new Uint8Array(c.buffer),nm);
+    off+=30+nm.length+data.length;
+  }
+  const cdSize=central.reduce((a,b)=>a+b.length,0), e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cdSize,true);e.setUint32(16,off,true);
+  const all=[...chunks,...central,new Uint8Array(e.buffer)], n=all.reduce((a,b)=>a+b.length,0), out=new Uint8Array(n);
+  let p=0; for(const a of all){out.set(a,p);p+=a.length;} return out;
+}
+function saveBinary(name,bytes,mime){
+  if(IN_APP&&AndroidApp.saveFileB64){
+    let s="";for(let i=0;i<bytes.length;i+=0x8000)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));
+    AndroidApp.saveFileB64(name,btoa(s),mime);return;
+  }
+  if(IN_APP){toast("Update the app to save Excel files.");return;}
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([bytes],{type:mime}));
+  a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);
+}
+const XLSX_MIME="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+// ---------------------------------------------------------------- Excel workbooks
+// Three downloads, all .xlsx with native Excel charts:
+//   Flight report   (flight page)  report sheet + the analysed log, compared with the previous flight
+//   Analysed logs   (Flights tab)  every second of each flight shown, with worked-out columns
+//   Trends workbook (Trends tab)   per model, one row per flight of the trend measures and flags
+const XC={rpm:"2563EB",set:"94A3B8",egt:"EA580C",pump:"0D9488",batt:"7C3AED",prev:"9CA3AF",bad:"DC2626",band:"9CA3AF",accent:"2563EB"};
+async function logText(f){
+  if(!csvCache[f.key]) csvCache[f.key]=await api("/api/flight.csv?key="+encodeURIComponent(f.key));
+  return csvCache[f.key];
+}
+function parseLog(text){
+  const n=v=>v===""||v==null?null:+v;
+  return text.replace(/\r/g,"").trim().split("\n").slice(1).map(l=>l.split(",")).filter(r=>r.length>=9).map(r=>({
+    t:+r[0],rpm:+r[1],set:+r[2],egt:+r[3],pump:+r[4],st:+r[5],thr:+r[6],aux:+r[7],batt:+r[8],air:n(r[9]),setspd:n(r[10])}));
+}
+// What the engine is doing each second. Same rules as the logger's flight summary:
+// ignition = state Ignite, running = state Run, flight power = Run at 90 % throttle or more.
+function phaseOf(r,lr){
+  const ign=lr.ignition_t>=0?lr.ignition_t:null, run=lr.run_t>=0?lr.run_t:null, sd=lr.shutdown_t>=0?lr.shutdown_t:null;
+  if(ign!=null&&r.t<ign) return "Before start";
+  if(run==null||r.t<run) return ign==null&&r.st===0?"Off":"Starting";
+  if(sd!=null&&r.t>=sd) return r.st===8?"Cooling down":r.st===0?"Off":"Shutting down";
+  if(r.st!==11) return STATES[r.st]||"State "+r.st;
+  if(r.thr>=90) return r.t>run+30?"Flight power":"Flight power (settling)";
+  return "Idle / part power";
+}
+const LOG_COLS=[
+  ["Time from ignition (s)",11,"Seconds from ignition (negative = before). Lines the flights up on the start."],
+  ["ECU time (s)",9,"Seconds since the ECU was switched on, as logged."],
+  ["Phase",20,"Before start, Starting, Flight power (90 % throttle or more), Idle / part power, Cooling down."],
+  ["ECU state",16,"The ECU's own state (JetCat state table)."],
+  ["RPM",9,"Turbine speed."],
+  ["Set RPM",9,"Speed the ECU is aiming for."],
+  ["RPM error",9,"Set RPM minus RPM: positive = turbine below target (lagging), negative = above."],
+  ["EGT (°C)",8,"Exhaust gas temperature."],
+  ["EGT change (°C/s)",10,"How fast EGT is rising (+) or falling (−)."],
+  ["Pump (V)",8,"Fuel pump voltage."],
+  ["Pump V per 1000 rpm",11,"Pump voltage divided by thousands of rpm: how hard the pump works for the speed. A rise over the flights can mean a restriction, a tired pump or a fuel problem."],
+  ["Throttle (%)",9,"Throttle input the ECU sees."],
+  ["Battery (V)",9,"ECU battery voltage."],
+  ["Battery drop (V)",9,"Drop from the resting voltage before the start (highest voltage before ignition)."],
+  ["Aux",6,"Aux channel value as logged."],
+  ["Airspeed",8,"Airspeed sensor (blank when none fitted)."],
+  ["Set speed",8,"Airspeed target (speed control only)."],
+];
+// Rows of the analysed log for one flight; row 1 = headings. Returns {rows, n, rest}.
+function analysedRows(f,log){
+  const lr=f.last_run||{}, t0=lr.ignition_t>=0?lr.ignition_t:(log.length?log[0].t:0);
+  const pre=log.filter(r=>lr.ignition_t>=0?r.t<lr.ignition_t:false);
+  const rest=pre.length?Math.max(...pre.map(r=>r.batt)):(log.length?log[0].batt:null);
+  const rows=[LOG_COLS.map(c=>({v:c[0],s:"h"}))];
+  let prev=null;
+  for(const r of log){
+    const dt=prev?r.t-prev.t:0;
+    rows.push([r.t-t0,r.t,phaseOf(r,lr),STATES[r.st]||("State "+r.st),r.rpm,r.set,r.set>0?r.set-r.rpm:null,r.egt,
+      dt>0?{v:+((r.egt-prev.egt)/dt).toFixed(1),s:"1dp"}:null,{v:r.pump,s:"2dp"},
+      r.rpm>=1000?{v:+(r.pump/(r.rpm/1000)).toFixed(4),s:"3dp"}:null,r.thr,{v:r.batt,s:"2dp"},
+      rest!=null?{v:+(rest-r.batt).toFixed(2),s:"2dp"}:null,r.aux,r.air,r.setspd]);
+    prev=r;
+  }
+  return {rows,n:log.length,rest};
+}
+function flightTitle(f){return heliName(f.serial)+" run "+f.runs_ok;}
+function fileSafe(s){return String(s).replace(/[^A-Za-z0-9._-]+/g,"_").replace(/^_|_$/g,"");}
+// Four charts of an analysed-log sheet (data from src), optionally with the previous flight dashed.
+function logCharts(src,n,prevSrc,prevN,at){
+  const X={col:0,from:2,to:n+1,title:"Time from ignition (s)"};
+  const p=(name,col,c)=>prevSrc?[{name:"Previous: "+name,src:prevSrc,col,from:2,to:prevN+1,colour:XC.prev,dash:"sysDash",width:12700}]:[];
+  const mk=(title,ytitle,fmt,series,i)=>({title,x:X,y:{title:ytitle,fmt},series,src,at:at(i)});
+  return [
+    mk("RPM","rpm","#,##0",[...p("RPM",4),{name:"Set RPM",col:5,colour:XC.set,dash:"dash",width:12700},{name:"RPM",col:4,colour:XC.rpm}],0),
+    mk("Exhaust temperature (EGT)","°C","0",[...p("EGT",7),{name:"EGT",col:7,colour:XC.egt}],1),
+    mk("Fuel pump","V","0.00",[...p("Pump",9),{name:"Pump",col:9,colour:XC.pump}],2),
+    mk("Battery","V","0.00",[...p("Battery",12),{name:"Battery",col:12,colour:XC.batt}],3)];
+}
+function aboutSheet(wb,title,lines){
+  const rows=[[{v:title,s:"title"}],[{v:"JetCat Logger · made "+fmtDate(new Date()),s:"note"}],[]];
+  for(const l of lines) rows.push(typeof l==="string"?[{v:l,s:"wrap"}]:l);
+  wb.sheet("About",{rows,widths:[100],grid:false});
+}
+function colNotes(){return [[],[{v:"Columns of the log sheets",s:"sub"}],...LOG_COLS.map(c=>[{v:c[0]+": "+c[2],s:"wrap"}])];}
+async function downloadXlsx(wb,name){
+  toast("Building the workbook…");
+  const bytes=await wb.bytes();
+  saveBinary(name,bytes,XLSX_MIME);
+}
+
+// ---- A: analysed logs of the flights shown
+async function exportAnalysedLogs(list){
+  if(exporting)return; exporting=true;
+  try{
+    const sorted=[...list].sort((a,b)=>a.serial.localeCompare(b.serial)||a.runs_ok-b.runs_ok);
+    const wb=new XlBook(); wb.title="JetCat flight logs";
+    const done=[], skipped=[];
+    aboutSheet(wb,"JetCat flight logs, analysed",[
+      "One sheet per flight: every second the ECU logged, plus columns worked out by the logger app (RPM error, EGT change, pump volts per 1000 rpm, battery drop and the phase of the flight). Each sheet has charts of RPM, EGT, pump and battery on the right.",
+      ...colNotes()]);
+    const about=wb.sheets[0];
+    for(let i=0;i<sorted.length;i++){
+      const f=sorted[i]; toast(`Reading log ${i+1} of ${sorted.length}…`);
+      let log; try{log=parseLog(await logText(f));}catch(e){log=[];}
+      if(!log.length){skipped.push(flightTitle(f));continue;}
+      const a=analysedRows(f,log), sh=wb.sheet(flightTitle(f),{rows:a.rows,widths:LOG_COLS.map(c=>c[1]),freeze:1,filter:1,heights:{0:32}});
+      sh.charts=logCharts(sh,a.n,null,0,k=>({col:LOG_COLS.length+1,row:2+k*18,w:9,h:17}));
+      done.push([f,sh.name]);
+    }
+    if(!done.length){toast("None of these flights has a log to export.");return;}
+    about.rows.splice(3,0,[{v:"Flights in this workbook",s:"sub"}],...done.map(([f,n])=>[{v:`${n} · ${whenText(f)} · run time ${mmss(runSecs(f))}${flew(f)?"":" · ground run"}`,s:"wrap"}]),
+      ...(skipped.length?[[{v:"No log downloaded for: "+skipped.join(", "),s:"note"}]]:[]),[]);
+    await downloadXlsx(wb,done.length===1?fileSafe(done[0][1])+" log.xlsx":"JetCat flight logs.xlsx");
+  }catch(e){toast("Could not build the workbook: "+e.message);}
+  finally{exporting=false;}
+}
+
+// ---- C: flight report
+function earlierFlown(f){const l=bySerial()[f.serial]||[];return l.filter(x=>x.runs_ok<f.runs_ok&&flew(x));}
+function avg(a){a=a.filter(v=>v!=null&&v>=0);return a.length?a.reduce((s,v)=>s+v,0)/a.length:null;}
+async function exportFlightReport(key){
+  if(exporting)return; exporting=true;
+  try{
+    const f=flights.find(x=>x.key===key); if(!f)return;
+    const lr=f.last_run||{}, list=bySerial()[f.serial]||[], pf=previousFlight(f), plr=pf?pf.last_run||{}:{};
+    const earlier=earlierFlown(f).slice(-TREND_WINDOW);
+    const wb=new XlBook(); wb.title="JetCat flight report "+flightTitle(f);
+    const R=[]; const merges=[];
+    const put=(...cells)=>R.push(cells);
+    put({v:heliName(f.serial)+" · run "+f.runs_ok,s:"title"});
+    put({v:"Flight report · "+whenText(f)+" · ECU "+f.serial+(f.fw_type?" ("+f.fw_type+")":""),s:"note"});merges.push("A2:E2");
+    put();
+    // Headline numbers
+    put({v:"The flight",s:"sub"});
+    put({v:"",s:"k"},{v:"This flight",s:"k"},{v:pf?"Previous (run "+pf.runs_ok+")":"Previous",s:"k"},{v:"Model average*",s:"k"},{v:"",s:"k"});
+    const fl=flew(f), pfl=pf&&flew(pf);
+    const line=(label,v,pv,av,st,note)=>put(label,v==null?"–":{v,s:st},pv==null?"–":{v:pv,s:st},av==null?"–":{v:av,s:st},note?{v:note,s:"note"}:null);
+    const rt=x=>{const v=runSecs(x);return v>=0?{v:v/86400,s:"mmss"}:"–";};
+    put("Run time (min:s)",rt(f),pf?rt(pf):"–","–",fl?null:{v:"Ground run: no time at flight power",s:"note"});
+    line("Start, ignition to run (s)",lr.start_s>=0?lr.start_s:null,pf&&plr.start_s>=0?plr.start_s:null,avg(earlier.map(x=>x.last_run.start_s)),"1dp");
+    line("Peak EGT during start (°C)",lr.peak_start_egt_c,pf?plr.peak_start_egt_c:null,avg(earlier.map(x=>x.last_run.peak_start_egt_c)),"int");
+    line("Max EGT in flight (°C)",fl?lr.max_egt_c:null,pfl?plr.max_egt_c:null,avg(earlier.map(x=>x.last_run.max_egt_c)),"int");
+    line("Mean EGT in flight (°C)",fl?lr.mean_flight_egt_c:null,pfl?plr.mean_flight_egt_c:null,avg(earlier.map(x=>x.last_run.mean_flight_egt_c)),"1dp");
+    line("Mean RPM in flight",fl?Math.round(lr.mean_flight_rpm):null,pfl?Math.round(plr.mean_flight_rpm):null,avg(earlier.map(x=>x.last_run.mean_flight_rpm)),"int");
+    line("Lowest RPM in flight",fl?lr.min_flight_rpm:null,pfl?plr.min_flight_rpm:null,avg(earlier.map(x=>x.last_run.min_flight_rpm)),"int");
+    line("Mean pump in flight (V)",fl?lr.mean_flight_pump_v:null,pfl?plr.mean_flight_pump_v:null,avg(earlier.map(x=>x.last_run.mean_flight_pump_v)),"3dp");
+    line("Lowest battery during start (V)",lr.min_start_batt_v,pf?plr.min_start_batt_v:null,avg(earlier.map(x=>x.last_run.min_start_batt_v)),"2dp");
+    put({v:`* Average of the ${earlier.length} flight${earlier.length===1?"":"s"} of this model before this one (up to ${TREND_WINDOW}; ground runs left out).`,s:"note"});
+    merges.push(`A${R.length}:E${R.length}`);
+    put();
+    // Checks against the usual range
+    put({v:"Checks",s:"sub"});
+    const checks=[];
+    for(const [k,label,unit,dp] of METRICS){
+      const p=trendSeries(list,k).find(p=>p.f===f); if(!p||p.lo==null)continue;
+      const fmt=v=>unit==="rpm"?Math.round(v).toLocaleString("en-GB")+" rpm":(+v).toFixed(dp)+" "+unit;
+      if(p.flag) checks.push([`${label}: ${fmt(p.v)} is ${p.v>p.hi?"above":"below"} the usual range for this model (${fmt(p.lo)} to ${fmt(p.hi)}).`,"bad"]);
+    }
+    const ranged=METRICS.some(([k])=>{const p=trendSeries(list,k).find(p=>p.f===f);return p&&p.lo!=null;});
+    if(checks.length) checks.forEach(c=>{put({v:c[0],s:c[1]});merges.push(`A${R.length}:E${R.length}`);});
+    else{put({v:ranged?"All measures are within the usual range for this model.":`Not enough earlier flights for a usual range yet (needs ${TREND_MIN}).`,s:ranged?"good":"note"});merges.push(`A${R.length}:E${R.length}`);}
+    put({v:`Usual range = average ± 2 standard deviations of the previous ${TREND_WINDOW} flights of this model.`,s:"note"});merges.push(`A${R.length}:E${R.length}`);
+    if(f.session_values_valid){
+      const ab=f.off_condition&&f.off_condition!==1;
+      put({v:"Shutdown: "+(OFFS[f.off_condition]||f.off_condition),s:ab?"bad":"good"});merges.push(`A${R.length}:E${R.length}`);
+      put({v:f.failsafe_count?`Failsafe: ${f.failsafe_count} time${f.failsafe_count>1?"s":""}, ${f.failsafe_time_s} s in total.`:"No failsafe.",s:f.failsafe_count?"bad":"good"});merges.push(`A${R.length}:E${R.length}`);
+    }else{put({v:"Shutdown reason and failsafes not known: the logger was plugged in after the ECU had been switched off and on again.",s:"note"});merges.push(`A${R.length}:E${R.length}`);}
+    put();
+    // Engine
+    put({v:"Engine",s:"sub"});
+    put("Engine total",{v:+(f.total_run_time_s/3600).toFixed(1),s:"1dp"},"hours");
+    const sv=serviceInfo(f.serial);
+    if(sv) put("Since last service",{v:+sv.since.toFixed(1),s:sv.frac!=null&&sv.frac>=1?"bad":sv.frac!=null&&sv.frac>=0.8?"warn":"1dp"},sv.iv?`of ${sv.iv} h interval`:"hours",sv.date?{v:"serviced "+sv.date+" at "+sv.at+" h",s:"note"}:null);
+    put("Starts OK / failed",`${f.runs_ok} / ${f.starts_failed}`);
+    if(f.ambient_c!=null) put("Ambient at download (°C)",f.ambient_c);
+    put();
+    // Charts, from the log sheets
+    const chartRow=R.length+2;
+    put({v:"Charts",s:"sub"});
+    put({v:pf?`Solid line: this flight. Grey dashed: previous flight (run ${pf.runs_ok}). Both lined up on ignition.`:"Lined up on ignition (time 0).",s:"note"});
+    merges.push(`A${R.length}:E${R.length}`);
+    const rep=wb.sheet("Report",{rows:R,widths:[32,16,18,16,40],grid:false,merges});
+    let log=[]; try{if(f.log_status==="full")log=parseLog(await logText(f));}catch(e){}
+    if(log.length){
+      const a=analysedRows(f,log), sh=wb.sheet("Log run "+f.runs_ok,{rows:a.rows,widths:LOG_COLS.map(c=>c[1]),freeze:1,filter:1,heights:{0:32}});
+      let psh=null, pn=0;
+      if(pf){try{const pl=parseLog(await logText(pf));if(pl.length){const pa=analysedRows(pf,pl);psh=wb.sheet("Log run "+pf.runs_ok+" (previous)",{rows:pa.rows,widths:LOG_COLS.map(c=>c[1]),freeze:1,filter:1,heights:{0:32}});pn=pa.n;}}catch(e){}}
+      rep.charts=logCharts(sh,a.n,psh,pn,k=>({col:0,row:chartRow+2+k*19,w:4,h:18}));
+    }else{R.push([{v:"No log was downloaded for this flight, so there are no charts.",s:"note"}]);}
+    aboutSheet(wb,"About this report",[
+      "Report: the flight's headline numbers next to the previous flight and the model's average, checks against the usual range, the shutdown reason and the engine hours, then charts.",
+      "Log sheets: every second the ECU logged for this flight (and the previous one), with worked-out columns.",
+      ...colNotes()]);
+    await downloadXlsx(wb,fileSafe(flightTitle(f))+" report.xlsx");
+  }catch(e){toast("Could not build the report: "+e.message);}
+  finally{exporting=false;}
+}
+
+// ---- B: trends workbook
+async function exportTrends(){
+  if(exporting)return; exporting=true;
+  try{
+    const g=bySerial(), serials=Object.keys(g).sort((a,b)=>heliName(a).localeCompare(heliName(b)));
+    if(!serials.length){toast("No flights yet.");return;}
+    const wb=new XlBook(); wb.title="JetCat trends";
+    const dt=dateText();
+    aboutSheet(wb,"JetCat trends",[
+      "Summary: one line per model. Then one sheet per model with a row for each flight: the measures the Trends tab plots, and which of them fell outside the usual range for that model (red).",
+      `Usual range: average ± 2 standard deviations of the previous ${TREND_WINDOW} flights of the same model, once there are ${TREND_MIN}. In-flight measures leave out ground runs.`,
+      "Run no. is the ECU's own count of successful runs, so gaps show flights that were not downloaded.",
+      dt?`Dates: ${dt} (the Flights tab's date filter). Usual ranges still use all earlier flights.`:"All dates.",
+      [],[{v:"Measures",s:"sub"}],...METRICS.map(([k,label,unit,dp,inF])=>[{v:`${label} (${unit})${inF?" - in flight only":""}`,s:"wrap"}])]);
+    const sum=[[ "Model","ECU","Flights","Ground runs","Run time (h)","Engine total (h)","Since service (h)","Last flight","Flags in last 5 flights"].map(v=>({v,s:"h"}))];
+    wb.sheet("Summary",{rows:sum,widths:[18,9,9,11,12,14,14,22,40],freeze:1,heights:{0:32}});
+    for(const sr of serials){
+      const all=g[sr], shown=all.filter(dateOk); if(!shown.length)continue;
+      const series={}; for(const [k] of METRICS) series[k]=new Map(trendSeries(all,k).map(p=>[p.f,p]));
+      const head=["Run no.","When","Type",...METRICS.map(m=>`${m[1]} (${m[2]})`),"Outside usual range"];
+      const dataCols=head.length+1;      // chart data block starts after a blank column
+      const chartHead=[]; for(const [k,label] of METRICS) chartHead.push(label+": usual low",label+": usual high",label+": flagged");
+      const rows=[[...head.map(v=>({v,s:"h"})),null,...chartHead.map(v=>({v,s:"h"}))]];
+      const flagsLast=[];
+      for(const f of shown){
+        const t=flightTime(f), flags=[], row=[f.runs_ok,t&&t.exact?t.date:(t?"before "+fmtDate(t.date):""),flew(f)?"Flight":"Ground run"];
+        const extra=[];
+        METRICS.forEach(([k,label,unit,dp])=>{
+          const p=series[k].get(f), st=dp===0?"int":dp===1?"1dp":dp===2?"2dp":"3dp";
+          if(!p){row.push(null);extra.push(null,null,null);return;}
+          if(p.flag)flags.push(label);
+          row.push({v:+(+p.v).toFixed(dp),s:p.flag?"bad":st});
+          extra.push(p.lo!=null?{v:+p.lo.toFixed(dp+1),s:st}:null,p.hi!=null?{v:+p.hi.toFixed(dp+1),s:st}:null,p.flag?p.v:null);
+        });
+        row.push(flags.length?{v:flags.join(", "),s:"bad"}:"");
+        rows.push([...row,null,...extra]);
+        flagsLast.push(flags);
+      }
+      const sh=wb.sheet(heliName(sr),{rows,widths:[8,20,11,...METRICS.map(()=>13),36,3,...chartHead.map(()=>12)],freeze:1,heights:{0:45}});
+      const n=shown.length;
+      sh.charts=METRICS.map(([k,label,unit,dp],i)=>{
+        const vc=3+i, lc=dataCols+i*3;
+        return {title:label,x:{col:0,from:2,to:n+1,title:"Run no.",fmt:"0"},y:{title:unit,fmt:dp?"0."+"0".repeat(dp):"#,##0"},
+          series:[{name:label,col:vc,colour:XC.accent,markers:true,markerSize:5},
+                  {name:"Usual low",col:lc,colour:XC.band,dash:"dash",width:9525},
+                  {name:"Usual high",col:lc+1,colour:XC.band,dash:"dash",width:9525},
+                  {name:"Outside usual range",col:lc+2,colour:XC.bad,line:false,markers:true,markerSize:9}],
+          at:{col:(i%2)*8,row:n+4+Math.floor(i/2)*19,w:8,h:18}};
+      });
+      const tot=engineHours(sr), sv=serviceInfo(sr), last=all[all.length-1], recent=flagsLast.slice(-5).flat();
+      sum.push([heliName(sr),sr,shown.filter(flew).length,shown.filter(f=>!flew(f)).length,{v:+(totalRun(shown)/3600).toFixed(2),s:"2dp"},
+        tot!=null?{v:+tot.toFixed(1),s:"1dp"}:null,sv?{v:+sv.since.toFixed(1),s:sv.frac!=null&&sv.frac>=1?"bad":sv.frac!=null&&sv.frac>=0.8?"warn":"1dp"}:"not set",
+        whenText(last),recent.length?{v:[...new Set(recent)].join(", "),s:"bad"}:{v:"none",s:"good"}]);
+    }
+    await downloadXlsx(wb,"JetCat trends.xlsx");
+  }catch(e){toast("Could not build the workbook: "+e.message);}
+  finally{exporting=false;}
+}
+
 let toastT;
 function toast(msg){let t=$("#toast");if(!t){t=document.createElement("div");t.id="toast";
   t.style.cssText="position:fixed;left:50%;bottom:76px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:14px;z-index:9;max-width:90%";

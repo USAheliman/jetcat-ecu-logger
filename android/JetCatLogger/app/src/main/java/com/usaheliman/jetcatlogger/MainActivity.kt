@@ -530,18 +530,27 @@ class MainActivity : AppCompatActivity() {
             updates.installFirmware(tag, board)
         }
         /** The pages' CSV exports: a WebView can't download, so hand the file to the share sheet. */
-        @JavascriptInterface fun saveFile(name: String, text: String) = runOnUiThread {
-            runCatching {
-                val dir = File(cacheDir, "exports").apply { mkdirs() }
-                val f = File(dir, name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
-                f.writeText(text)
-                val u = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", f)
-                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                    type = "text/csv"; putExtra(Intent.EXTRA_STREAM, u)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }, "Save or send $name"))
-            }.onFailure { toast("Could not export: ${it.message}") }
+        @JavascriptInterface fun saveFile(name: String, text: String) =
+            shareFile(name, text.toByteArray(), "text/csv")
+        // Binary files from the pages (the Excel workbooks), sent as base64.
+        @JavascriptInterface fun saveFileB64(name: String, b64: String, mime: String) {
+            val bytes = runCatching { android.util.Base64.decode(b64, android.util.Base64.DEFAULT) }
+                .getOrElse { runOnUiThread { toast("Could not export: ${it.message}") }; return }
+            shareFile(name, bytes, mime)
         }
+    }
+
+    private fun shareFile(name: String, bytes: ByteArray, mime: String) = runOnUiThread {
+        runCatching {
+            val dir = File(cacheDir, "exports").apply { mkdirs() }
+            val f = File(dir, name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+            f.writeBytes(bytes)
+            val u = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", f)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = mime; putExtra(Intent.EXTRA_STREAM, u)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, "Save or send $name"))
+        }.onFailure { toast("Could not export: ${it.message}") }
     }
 
     private fun toast(m: String) = Toast.makeText(this, m, Toast.LENGTH_LONG).show()
