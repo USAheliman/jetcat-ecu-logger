@@ -6,7 +6,7 @@
 #   - push an annotated tag v<version>; its message becomes the notes.
 # Builds the logger firmware for both boards and the Android app, all stamped with that
 # version, and publishes GitHub release v<version>:
-#   JetCatLogger.apk, firmware-xiao_plus.bin, firmware-devkitc.bin, release.json
+#   JetCatLogger.apk, firmware-xiao_plus.bin, release.json (the DevKitC is retired; its build env stays in platformio.ini)
 # The app offers the new app version and lists the firmware in Settings > Updates.
 # Version numbers are only ever set here; every other build is "dev".
 name: Release
@@ -74,10 +74,9 @@ jobs:
         run: |
           pip install -q platformio
           export PLATFORMIO_BUILD_FLAGS="-DFW_VERSION=\\\"$VERSION\\\""
-          pio run -e xiao_plus -e esp32s3_n16r8
+          pio run -e xiao_plus
           mkdir -p out
           cp .pio/build/xiao_plus/firmware.bin out/firmware-xiao_plus.bin
-          cp .pio/build/esp32s3_n16r8/firmware.bin out/firmware-devkitc.bin
           # the version must be inside the image
           grep -c "$VERSION" out/firmware-xiao_plus.bin >/dev/null || { echo "::error::version not found in firmware"; exit 1; }
 

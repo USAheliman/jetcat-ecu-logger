@@ -21,6 +21,6 @@ jobs:
       - name: Build both boards
         run: |
           pip install -q platformio
-          pio run -e xiao_plus -e esp32s3_n16r8
+          pio run -e xiao_plus
       - name: Parser unit test
         run: pio test -e native
