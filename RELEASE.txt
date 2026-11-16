@@ -1,3 +1,12 @@
-1.1.1
+1.1.2
 
-Stronger Bluetooth: the logger now transmits at +18 dBm (was +9 dBm), so it can be reached from further away and from inside its case.
+Excel downloads with charts
+- Flight page: Flight report (Excel) - numbers vs the previous flight and the model's average, checks in plain words, shutdown, engine and service hours, charts
+- Flights tab: Analysed logs with charts (Excel) - every second plus worked-out columns, a sheet per flight
+- Trends tab: Trends workbook (Excel) - every flight's measures per model, usual range, flags and charts
+
+Also
+- Flights tab: full logs (every second) as CSV, as well as the summary
+- 'Model' instead of 'heli' throughout, so the app suits JetCat aircraft too
+
+Install the firmware update as well.
