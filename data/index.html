@@ -103,6 +103,19 @@ canvas{width:100%;height:150px;display:block;touch-action:pan-y}
 .svc .big{font-size:18px;font-weight:750;color:var(--svc,var(--good));font-variant-numeric:tabular-nums}
 .svc .bar{height:7px;margin:7px 0 2px;background:color-mix(in srgb,var(--ink2) 22%,transparent)}
 .svc .bar div{background:var(--svc,var(--good))}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.tile{background:var(--card);border-radius:14px;overflow:hidden;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.12);
+  border-top:4px solid var(--hc);display:flex;flex-direction:column}
+.tile:active{filter:brightness(.95)}
+.tile .hphoto{margin:0;aspect-ratio:4/3;border-radius:0}
+.tile .hphoto .tag{font-size:13px;left:6px;bottom:6px;padding:2px 8px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .hphoto.ph .ini{font-size:40px}
+.tile .tb{padding:8px 9px 9px}
+.tile .hrs{display:flex;justify-content:space-between;align-items:baseline;gap:4px;font-size:12px;color:var(--ink2)}
+.tile .hrs b{font-size:15px;color:var(--svc,var(--ink));font-variant-numeric:tabular-nums}
+.tile .bar{height:6px;margin:5px 0 0;border-radius:3px;overflow:hidden;background:color-mix(in srgb,var(--ink2) 22%,transparent)}
+.tile .bar div{height:100%;background:var(--svc,var(--good))}
+.tile .pill{font-size:11px;padding:1px 7px;margin:5px 4px 0 0}
 .hedit{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
 .hedit:first-of-type{border-top:0}
 .thumb{width:100%;max-width:320px;aspect-ratio:16/9;border-radius:10px;background:center/cover no-repeat var(--bg);
@@ -160,7 +173,7 @@ function flew(f){return ((f.last_run||{}).mean_flight_rpm||0)>0;}
 const TREND_WINDOW=10, TREND_MIN=5;   // rolling mean ± 2σ of the previous 10 flights, from 5 flights
 
 // ---------------------------------------------------------------- state
-let flights=[], helis={}, status=null, tab="fleet", detailKey=null, trendSerial=null;
+let flights=[], helis={}, status=null, tab="fleet", detailKey=null, trendSerial=null, fleetSerial=null;
 let heliInfo={}, photos={};   // service details + photo length per ECU serial; photo data URLs (with their length)
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -446,16 +459,43 @@ function render(){
   if(tab==="console") showConsole(true);
 }
 
+// Fleet: a tile per model, two across, the model with the most recently downloaded flight first.
+// Tile = photo, hours since service (or engine total) with its bar, and any trend flags on the
+// last flight. Tapping a tile opens that model's details.
+function lastDownload(list){return Math.max(...list.map(f=>{const d=f.downloaded_at?Date.parse(f.downloaded_at):NaN;
+  if(isFinite(d))return d;const t=flightTime(f);return t?t.date.getTime():0;}));}
+function photoHtml(s,big){
+  const ph=photos[s], nm=heliName(s);
+  return ph?`<div class="hphoto" style="background-image:url('${ph.url}')"><span class="tag">${esc(nm)}</span></div>`
+    :`<div class="hphoto ph"><div class="ini">${esc((nm.match(/[A-Za-z0-9]/)||["?"])[0].toUpperCase())}</div>
+       <div class="hint">${big?"Add a photo in Settings › Models":esc(nm)}</div></div>`;
+}
 function fleetView(){
-  const g=bySerial(), serials=Object.keys(g);
+  const g=bySerial();
+  if(fleetSerial&&g[fleetSerial]) return modelView(fleetSerial,g[fleetSerial]);
+  fleetSerial=null;
+  const serials=Object.keys(g).sort((a,b)=>lastDownload(g[b])-lastDownload(g[a]));
   if(!serials.length) return `<div class="card empty">No flights yet.<br>Plug the logger into an ECU after a flight.</div>`;
-  return serials.map(s=>{
-    const list=g[s], last=list[list.length-1], missed=missedFlights(list), flags=flagsFor(last,list);
-    const ph=photos[s], sv=serviceInfo(s), nm=heliName(s);
-    return `<div class="card heli" onclick="openFlight('${esc(last.key)}')" style="cursor:pointer;--hc:${heliColour(s)}">
-      ${ph?`<div class="hphoto" style="background-image:url('${ph.url}')"><span class="tag">${esc(nm)}</span></div>`
-          :`<div class="hphoto ph"><div class="ini">${esc((nm.match(/[A-Za-z0-9]/)||["?"])[0].toUpperCase())}</div>
-             <div class="hint">Add a photo in Settings › Models</div></div>`}
+  return `<div class="fgrid">${serials.map(s=>{
+    const list=g[s], last=list[list.length-1], flags=flagsFor(last,list), sv=serviceInfo(s);
+    const hrs=sv?(sv.iv?`<div class="hrs"><span>Since service</span><b>${sv.since.toFixed(1)}<span style="font-size:11px;font-weight:550"> / ${sv.iv} h</span></b></div>
+          <div class="bar"><div style="width:${Math.min(100,sv.frac*100)}%"></div></div>`
+        :`<div class="hrs"><span>Since service</span><b>${sv.since.toFixed(1)} h</b></div>`)
+      :`<div class="hrs"><span>Engine total</span><b>${hours(last.total_run_time_s)}</b></div>`;
+    return `<div class="tile" style="--hc:${heliColour(s)};${sv?`--svc:${sv.colour}`:""}" onclick="openModel('${esc(s)}')">
+      ${photoHtml(s,false)}<div class="tb">${hrs}
+      ${sv&&sv.frac>=1?`<span class="pill bad">Service due</span>`:""}
+      ${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}</div></div>`;}).join("")}</div>`;
+}
+function openModel(s){fleetSerial=s;tab="fleet";render();window.scrollTo(0,0);try{history.pushState({model:s},"");}catch(e){}}
+function closeModel(){fleetSerial=null;render();}
+window.addEventListener("popstate",()=>{if(fleetSerial){fleetSerial=null;render();}});
+function modelView(s,list){
+  const last=list[list.length-1], missed=missedFlights(list), flags=flagsFor(last,list), sv=serviceInfo(s), nm=heliName(s);
+  const recent=[...list].reverse().slice(0,5), g=bySerial();
+  return `<button class="back" onclick="history.state&&history.state.model?history.back():closeModel()">‹ All models</button>
+    <div class="card heli" style="--hc:${heliColour(s)}">
+      ${photoHtml(s,true)}
       <div class="row"><h2>${esc(nm)}</h2><span class="sub">${last.turbine_type?esc(last.turbine_type)+" · ":""}ECU ${esc(s)}</span></div>
       <div class="sub">Last flight ${esc(whenText(last))}</div>
       <div class="grid">
@@ -468,12 +508,16 @@ function fleetView(){
           <span class="big">${sv.since.toFixed(1)} h${sv.iv?` <span style="font-size:13px;font-weight:550">of ${sv.iv} h</span>`:""}</span></div>
           ${sv.iv?`<div class="bar"><div style="width:${Math.min(100,sv.frac*100)}%"></div></div>`:""}
           <div class="sub">${sv.frac>=1?"<b>Service due</b> · ":sv.frac>=0.8?"Service due soon · ":""}Serviced at ${sv.at.toFixed(1)} h${sv.date?" on "+esc(new Date(sv.date+"T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})):""}</div></div>`
-        :`<div class="svc" style="--svc:var(--ink2)" onclick="event.stopPropagation();tab='settings';render()"><div class="top"><span class="k">Since last service</span><span class="linkbtn">Set service hours ›</span></div></div>`}
+        :`<div class="svc" style="--svc:var(--ink2)" onclick="tab='settings';render()"><div class="top"><span class="k">Since last service</span><span class="linkbtn">Set service hours ›</span></div></div>`}
       <div>${flags.map(x=>`<span class="pill bad">${esc(x)}</span>`).join("")}
         ${missed?`<span class="pill warn">${missed} flight${missed>1?"s":""} not captured</span>`:""}
         ${helis[s]?"":`<span class="pill">Tap Settings to name this model</span>`}
         <span class="pill">${list.length} stored</span></div>
-    </div>`;}).join("");
+      <div class="btns"><button class="btn primary" onclick="openFlight('${esc(last.key)}')">Last flight ›</button>
+        <button class="btn" onclick="trendSerial='${esc(s)}';if(flt.heli!=='all'){flt.heli='${esc(s)}';saveFilter();}tab='trends';render()">Trends ›</button>
+        <button class="btn" onclick="flt.heli='${esc(s)}';saveFilter();tab='flights';render()">All flights ›</button></div>
+    </div>
+    <div class="card"><h2>Recent flights</h2><div class="list" style="padding:0">${recent.map(f=>flightItem(f,g)).join("")}</div></div>`;
 }
 
 function chip(label,on,click,colour){return `<button class="chip${on?" on":""}"${colour?` style="--cc:${colour}"`:""} onclick="${click}">${esc(label)}</button>`;}
@@ -1446,7 +1490,7 @@ async function pollStatus(){
     if(tab==="settings"&&![...document.querySelectorAll("#view input")].some(i=>i===document.activeElement||i.value!==i.defaultValue))render();
   }catch(e){$("#status").textContent="Not connected to the logger";}
 }
-document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{tab=b.dataset.tab;if(tab!=="flights")detailKey=null;render();
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{tab=b.dataset.tab;if(tab!=="flights")detailKey=null;if(tab==="fleet")fleetSerial=null;render();
   if(tab==="console")pollConsole();});
 window.addEventListener("resize",()=>{if(tab==="trends")drawTrends();else if(detailKey)showFlight(detailKey);});
 (async()=>{
