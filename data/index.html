@@ -638,7 +638,7 @@ async function showFlight(key){
 }
 
 // ---------------------------------------------------------------- in-flight charts
-// RPM, throttle, EGT, pump and battery against time for one flight, with the previous flight of the
+// throttle, RPM, EGT, pump and battery against time for one flight, with the previous flight of the
 // same heli as a faint dashed line. Both are lined up on ignition (time 0), so the start
 // and the flight can be compared directly; time before ignition is shown as negative.
 const csvCache={};
@@ -659,7 +659,7 @@ async function flightCharts(el,f,p){
   try{
     const a=await flightLog(f), pf=previousFlight(f);
     let b=null; if(pf){try{b=await flightLog(pf);}catch(e){}}
-    el.innerHTML=chartBlock("RPM and set RPM",p+"-rpm")+chartBlock("Throttle position",p+"-thr")+chartBlock("EGT",p+"-egt")+chartBlock("Pump voltage",p+"-pump")+chartBlock("Battery",p+"-batt")+
+    el.innerHTML=chartBlock("Throttle position",p+"-thr")+chartBlock("RPM and set RPM",p+"-rpm")+chartBlock("EGT",p+"-egt")+chartBlock("Pump voltage",p+"-pump")+chartBlock("Battery",p+"-batt")+
       `<div class="note">Time from ignition${a.fromIgn?"":" (from the start of the log: no start was found)"}.
        ${b?`Faint dashed line: previous flight, run ${pf.runs_ok}.`:"No earlier flight of this model to compare with yet."}
        Tap or drag on any chart: the line shows the same moment on all of them.</div>`;
@@ -674,8 +674,8 @@ async function flightCharts(el,f,p){
     const pv=(i,key,fmt)=>{if(!b)return "";const j=nearest(b.x,a.x[i]);return Math.abs(b.x[j]-a.x[i])<=2?` · prev ${fmt(b[key][j])}`:"";};
     // One cursor across all the charts; each title shows the time, the RPM one the engine state too.
     linkedHover(a.x,[
-      {canvas:$("#"+p+"-rpm"),fn:i=>`${lab(i)} · ${a.rpm[i].toLocaleString()} (set ${a.set[i].toLocaleString()})${pv(i,"rpm",v=>v.toLocaleString())}`},
       {canvas:$("#"+p+"-thr"),fn:i=>`${tfmt(a.x[i])} · throttle ${a.thr[i]} %${pv(i,"thr",v=>v+" %")}`},
+      {canvas:$("#"+p+"-rpm"),fn:i=>`${lab(i)} · ${a.rpm[i].toLocaleString()} (set ${a.set[i].toLocaleString()})${pv(i,"rpm",v=>v.toLocaleString())}`},
       {canvas:$("#"+p+"-egt"),fn:i=>`${tfmt(a.x[i])} · ${a.egt[i]} °C${pv(i,"egt",v=>v+" °C")}`},
       {canvas:$("#"+p+"-pump"),fn:i=>`${tfmt(a.x[i])} · ${a.pump[i].toFixed(2)} V${pv(i,"pump",v=>v.toFixed(2)+" V")}`},
       {canvas:$("#"+p+"-batt"),fn:i=>`${tfmt(a.x[i])} · ${a.batt[i].toFixed(2)} V${pv(i,"batt",v=>v.toFixed(2)+" V")}`}]);
@@ -1274,8 +1274,8 @@ function logCharts(src,n,prevSrc,prevN,at){
   const p=(name,col,c)=>prevSrc?[{name:"Previous: "+name,src:prevSrc,col,from:2,to:prevN+1,colour:XC.prev,dash:"sysDash",width:12700}]:[];
   const mk=(title,ytitle,fmt,series,i)=>({title,x:X,y:{title:ytitle,fmt},series,src,at:at(i)});
   return [
-    mk("RPM","rpm","#,##0",[...p("RPM",4),{name:"Set RPM",col:5,colour:XC.set,dash:"dash",width:12700},{name:"RPM",col:4,colour:XC.rpm}],0),
-    mk("Throttle position","%","0",[...p("Throttle",11),{name:"Throttle",col:11,colour:XC.thr}],1),
+    mk("Throttle position","%","0",[...p("Throttle",11),{name:"Throttle",col:11,colour:XC.thr}],0),
+    mk("RPM","rpm","#,##0",[...p("RPM",4),{name:"Set RPM",col:5,colour:XC.set,dash:"dash",width:12700},{name:"RPM",col:4,colour:XC.rpm}],1),
     mk("Exhaust temperature (EGT)","°C","0",[...p("EGT",7),{name:"EGT",col:7,colour:XC.egt}],2),
     mk("Fuel pump","V","0.00",[...p("Pump",9),{name:"Pump",col:9,colour:XC.pump}],3),
     mk("Battery","V","0.00",[...p("Battery",12),{name:"Battery",col:12,colour:XC.batt}],4)];
@@ -1300,7 +1300,7 @@ async function exportAnalysedLogs(list){
     const wb=new XlBook(); wb.title="JetCat flight logs";
     const done=[], skipped=[];
     aboutSheet(wb,"JetCat flight logs, analysed",[
-      "One sheet per flight: every second the ECU logged, plus columns worked out by the logger app (RPM error, EGT change, pump volts per 1000 rpm, battery drop and the phase of the flight). Each sheet has charts of RPM, throttle, EGT, pump and battery on the right.",
+      "One sheet per flight: every second the ECU logged, plus columns worked out by the logger app (RPM error, EGT change, pump volts per 1000 rpm, battery drop and the phase of the flight). Each sheet has charts of throttle, RPM, EGT, pump and battery on the right.",
       ...colNotes()]);
     const about=wb.sheets[0];
     for(let i=0;i<sorted.length;i++){
