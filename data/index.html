@@ -199,7 +199,7 @@ function battPct(mv){if(mv>=4200)return 100;if(mv<=3300)return 0;
 function battText(s){const p=s&&s.power;if(!p||!(p.battery_mv>0))return "";
   const c=p.charge==="charging"?" charging":p.charge==="charged"?" charged":"";
   return `battery ${(p.battery_mv/1000).toFixed(2)} V (~${battPct(p.battery_mv)}%)${p.low?" LOW":""}${c}`;}
-function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this phone":"WiFi";}
+function viaText(v){return v==="ble"?"Bluetooth":v==="phone"?"Copies on this phone":v==="demo"?"demo":"WiFi";}
 function heliName(serial){return helis[serial]||("ECU "+serial);}
 // One colour per heli (by ECU serial, in sorted order), used on its chips, cards and list rows.
 const HELI_COLOURS=["#2563eb","#ea580c","#7c3aed","#0d9488","#db2777","#16a34a","#ca8a04","#0891b2"];
