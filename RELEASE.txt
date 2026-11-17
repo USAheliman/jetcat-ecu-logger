@@ -1,7 +1,6 @@
-1.1.3
+1.1.4
 
-Fleet tab
-- Photo tiles, two across, with the hours bar and any trend flags; the model with the latest download comes first
-- Tap a tile for the model: last flight, service, flags, recent flights and buttons for Last flight, Trends and All flights
-
-Install the firmware update as well.
+Flights
+- Throttle position chart at the top of each flight, lined up with RPM, EGT, pump and battery
+- Throttle chart in the Excel flight report and analysed logs too
+- CSV buttons removed from the Flights tab and flight page (Settings still has Export all flights)
